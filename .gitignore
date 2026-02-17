@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Tmux Orchestrator state (local to each machine)
+.next_check_note.txt
+
+# Worktrees (auto-added by torc, but ignore just in case)
+.worktrees/
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+.git-backup-*/

@@ -1,0 +1,109 @@
+#!/bin/bash
+# torc-review - Review pending executor work
+# Usage: torc review [team-name]
+
+set -euo pipefail
+source "$(dirname "$0")/../lib/config.sh"
+source "$(dirname "$0")/../lib/state.sh"
+source "$(dirname "$0")/../lib/worktree.sh"
+
+usage() {
+    cat <<'EOF'
+Usage: torc review [team-name]
+
+Review pending commits from executor agents. Shows commits ahead of main
+for each executor worktree branch.
+
+Examples:
+  torc review
+  torc review my-app
+EOF
+}
+
+if [ "$#" -gt 0 ] && { [ "$1" = "-h" ] || [ "$1" = "--help" ]; }; then
+    usage
+    exit 0
+fi
+
+TEAM_NAME="${1:-}"
+
+review_team() {
+    local team="$1"
+    local project_path agents_json main_branch
+
+    project_path=$(team_field "$team" "project_path")
+    agents_json=$(team_field "$team" "agents")
+
+    if [ -z "$project_path" ]; then
+        echo "Error: could not read team state for '$team'" >&2
+        return 1
+    fi
+
+    main_branch=$(get_main_branch "$project_path")
+
+    echo "=== Review for team: $team ==="
+    echo "Project: $project_path"
+    echo "Main branch: $main_branch"
+    echo ""
+
+    # Find all executor agents
+    echo "$agents_json" | python3 -c "
+import json, sys
+agents = json.load(sys.stdin)
+for agent_id, agent_data in agents.items():
+    if agent_data.get('role') == 'executor':
+        branch = agent_data.get('branch', '')
+        worktree = agent_data.get('worktree', '')
+        print(f'{agent_id}:{branch}:{worktree}')
+" 2>/dev/null | while IFS=: read -r agent_id branch worktree; do
+        echo "--- Executor: $agent_id ---"
+        echo "Branch: $branch"
+
+        # Check if branch exists
+        if ! git -C "$project_path" rev-parse --verify "$branch" >/dev/null 2>&1; then
+            echo "  (branch not found - no commits yet)"
+            echo ""
+            continue
+        fi
+
+        # Count commits ahead
+        commits_ahead=$(worktree_commits_ahead "$project_path" "$branch")
+
+        if [ "$commits_ahead" -eq 0 ]; then
+            echo "  No commits ahead of $main_branch"
+        else
+            echo "  Commits ahead: $commits_ahead"
+            echo ""
+            echo "  Log:"
+            git -C "$project_path" log --oneline "$main_branch..$branch" | sed 's/^/    /'
+            echo ""
+            echo "  Diff summary:"
+            git -C "$project_path" diff --stat "$main_branch..$branch" | sed 's/^/    /'
+        fi
+
+        echo ""
+    done
+
+    echo "To merge an executor's work:"
+    echo "  torc merge $team <executor-id>"
+    echo ""
+}
+
+if [ -n "$TEAM_NAME" ]; then
+    if ! team_exists "$TEAM_NAME"; then
+        echo "Error: team '$TEAM_NAME' not found" >&2
+        exit 1
+    fi
+    review_team "$TEAM_NAME"
+else
+    # Review all teams
+    teams=$(list_teams)
+    if [ -z "$teams" ]; then
+        echo "No active teams to review."
+        exit 0
+    fi
+
+    for team in $teams; do
+        review_team "$team"
+    done
+fi

@@ -1,0 +1,113 @@
+#!/bin/bash
+# torc-status - Show status of active agent teams
+# Usage: torc status [team-name]
+
+set -euo pipefail
+source "$(dirname "$0")/../lib/config.sh"
+source "$(dirname "$0")/../lib/state.sh"
+source "$(dirname "$0")/../lib/tmux.sh"
+source "$(dirname "$0")/../lib/worktree.sh"
+
+usage() {
+    cat <<'EOF'
+Usage: torc status [team-name]
+
+Show status of all active teams, or a specific team if name is provided.
+
+Examples:
+  torc status
+  torc status my-app
+EOF
+}
+
+if [ "$#" -gt 0 ] && { [ "$1" = "-h" ] || [ "$1" = "--help" ]; }; then
+    usage
+    exit 0
+fi
+
+TEAM_NAME="${1:-}"
+
+show_team_status() {
+    local team="$1"
+    local session project_path agents_json
+
+    session=$(team_field "$team" "session")
+    project_path=$(team_field "$team" "project_path")
+    agents_json=$(team_field "$team" "agents")
+
+    if [ -z "$session" ]; then
+        echo "Error: could not read team state for '$team'" >&2
+        return 1
+    fi
+
+    echo "Team: $team (session: $session)"
+
+    # Check if session is running
+    if ! tmux_session_exists "$session"; then
+        echo "  ⚠️  Session not running"
+        return 0
+    fi
+
+    # Show each agent
+    echo "$agents_json" | python3 -c "
+import json, sys
+agents = json.load(sys.stdin)
+for agent_id, agent_data in agents.items():
+    window = agent_data.get('window', 'unknown')
+    cli = agent_data.get('cli', 'unknown')
+    role = agent_data.get('role', 'unknown')
+    worktree = agent_data.get('worktree', '')
+    branch = agent_data.get('branch', '')
+
+    print(f'├── {agent_id} [{cli}] - window {window} - role: {role}')
+    if worktree:
+        print(f'│   ├── Worktree: {worktree}')
+        print(f'│   └── Branch: {branch}')
+" 2>/dev/null || echo "  └── (error reading agents)"
+
+    # Show last output from each agent
+    python3 -c "
+import json, sys
+agents = json.loads('$agents_json')
+for agent_id, agent_data in agents.items():
+    window = agent_data.get('window')
+    if window:
+        print(f'{agent_id}:{window}')
+" 2>/dev/null | while read -r line; do
+        agent_id="${line%%:*}"
+        window="${line##*:}"
+
+        # Capture last line
+        last_output=$(tmux_capture "$session:$window" 1 2>/dev/null | tail -1 || echo "(no output)")
+        echo "│   └── Last: ${last_output:0:80}"
+    done
+
+    # Check for pending reviews
+    review_count=$(git -C "$project_path" branch --list "executor-*" 2>/dev/null | wc -l | tr -d ' ')
+    if [ "$review_count" -gt 0 ]; then
+        echo "└── Review Queue: $review_count executor branch(es)"
+    fi
+
+    echo ""
+}
+
+if [ -n "$TEAM_NAME" ]; then
+    if ! team_exists "$TEAM_NAME"; then
+        echo "Error: team '$TEAM_NAME' not found" >&2
+        exit 1
+    fi
+    show_team_status "$TEAM_NAME"
+else
+    # Show all teams
+    teams=$(list_teams)
+    if [ -z "$teams" ]; then
+        echo "No active teams."
+        echo ""
+        echo "Deploy a team with: torc deploy <project-path>"
+        exit 0
+    fi
+
+    for team in $teams; do
+        show_team_status "$team"
+    done
+fi

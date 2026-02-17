@@ -1,0 +1,20 @@
+#!/bin/bash
+# torc-send - Send a message to an agent in a tmux window
+# Usage: torc send <session:window> <message>
+
+set -euo pipefail
+source "$(dirname "$0")/../lib/config.sh"
+source "$(dirname "$0")/../lib/tmux.sh"
+
+if [ $# -lt 2 ]; then
+    echo "Usage: torc send <session:window> <message>"
+    echo "Example: torc send torc-my-app:PL 'What is your status?'"
+    exit 1
+fi
+
+TARGET="$1"
+shift
+MESSAGE="$*"
+
+tmux_send "$TARGET" "$MESSAGE"
+echo "Message sent to $TARGET"

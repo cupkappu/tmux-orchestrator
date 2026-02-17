@@ -1,0 +1,52 @@
+#!/bin/bash
+# torc - Tmux Orchestrator main entry point
+# Usage: torc <command> [args...]
+
+set -euo pipefail
+
+TORC_BIN="$(cd "$(dirname "$0")" && pwd)"
+
+usage() {
+    cat <<'EOF'
+Usage: torc <command> [args...]
+
+Commands:
+  deploy <project-path> [--executors <N>]    Deploy a multi-agent team
+  status [team-name]                          Show team/agent status
+  send <session:window> <message>             Send message to an agent
+  start-agent <session:window> [role]         Start a CLI agent
+  worktree create|list|remove <args>          Manage git worktrees
+  review [team-name]                          Review pending executor work
+  merge <team-name> <executor-id>             Merge approved worktree branch
+  teardown <team-name>                        Shut down team and clean up
+
+Options:
+  -h, --help    Show this help message
+
+Examples:
+  torc deploy ~/projects/my-app --executors 2
+  torc status my-app
+  torc send torc-my-app:PL "What's the status?"
+  torc review my-app
+  torc merge my-app executor-1
+  torc teardown my-app
+EOF
+}
+
+if [ $# -eq 0 ] || [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+    usage
+    exit 0
+fi
+
+COMMAND="$1"
+shift
+
+SUBCOMMAND="$TORC_BIN/torc-$COMMAND"
+
+if [ ! -x "$SUBCOMMAND" ]; then
+    echo "Error: unknown command '$COMMAND'" >&2
+    echo "Run 'torc --help' for usage." >&2
+    exit 1
+fi
+
+exec "$SUBCOMMAND" "$@"

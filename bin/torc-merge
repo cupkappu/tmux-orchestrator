@@ -1,0 +1,87 @@
+#!/bin/bash
+# torc-merge - Merge approved executor work to main
+# Usage: torc merge <team-name> <executor-id>
+
+set -euo pipefail
+source "$(dirname "$0")/../lib/config.sh"
+source "$(dirname "$0")/../lib/state.sh"
+source "$(dirname "$0")/../lib/worktree.sh"
+
+usage() {
+    cat <<'EOF'
+Usage: torc merge <team-name> <executor-id>
+
+Merge an executor's worktree branch to the main branch.
+
+Examples:
+  torc merge my-app executor-1
+EOF
+}
+
+if [ $# -lt 2 ]; then
+    usage
+    exit 1
+fi
+
+TEAM_NAME="$1"
+EXECUTOR_ID="$2"
+
+if ! team_exists "$TEAM_NAME"; then
+    echo "Error: team '$TEAM_NAME' not found" >&2
+    exit 1
+fi
+
+# Get team info
+PROJECT_PATH=$(team_field "$TEAM_NAME" "project_path")
+AGENTS_JSON=$(team_field "$TEAM_NAME" "agents")
+
+# Find the executor's branch
+BRANCH=$(echo "$AGENTS_JSON" | python3 -c "
+import json, sys
+agents = json.load(sys.stdin)
+executor = agents.get('$EXECUTOR_ID', {})
+print(executor.get('branch', ''))
+" 2>/dev/null)
+
+if [ -z "$BRANCH" ]; then
+    echo "Error: executor '$EXECUTOR_ID' not found in team '$TEAM_NAME'" >&2
+    exit 1
+fi
+
+# Check if branch exists
+if ! git -C "$PROJECT_PATH" rev-parse --verify "$BRANCH" >/dev/null 2>&1; then
+    echo "Error: branch '$BRANCH' not found" >&2
+    exit 1
+fi
+
+MAIN_BRANCH=$(get_main_branch "$PROJECT_PATH")
+COMMITS_AHEAD=$(worktree_commits_ahead "$PROJECT_PATH" "$BRANCH")
+
+if [ "$COMMITS_AHEAD" -eq 0 ]; then
+    echo "Nothing to merge - branch '$BRANCH' has no commits ahead of $MAIN_BRANCH"
+    exit 0
+fi
+
+echo "Merging $EXECUTOR_ID's work to $MAIN_BRANCH"
+echo "  Branch: $BRANCH"
+echo "  Commits: $COMMITS_AHEAD ahead"
+echo ""
+
+# Show what will be merged
+echo "Commits to be merged:"
+git -C "$PROJECT_PATH" log --oneline "$MAIN_BRANCH..$BRANCH" | sed 's/^/  /'
+echo ""
+
+# Switch to main and merge
+echo "Switching to $MAIN_BRANCH and merging..."
+git -C "$PROJECT_PATH" checkout "$MAIN_BRANCH"
+git -C "$PROJECT_PATH" merge "$BRANCH" --no-ff -m "Merge work from $EXECUTOR_ID
+
+Merged branch: $BRANCH
+Commits: $COMMITS_AHEAD"
+
+echo ""
+echo "✓ Merge complete!"
+echo ""
+echo "The executor can continue working in their worktree."
+echo "To reset their branch: git -C $PROJECT_PATH/.worktrees/$EXECUTOR_ID reset --hard $MAIN_BRANCH"

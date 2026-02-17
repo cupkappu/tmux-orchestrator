@@ -1,0 +1,72 @@
+#!/bin/bash
+# torc-worktree - Manage git worktrees for executor agents
+# Usage: torc worktree <create|list|remove> <args>
+
+set -euo pipefail
+source "$(dirname "$0")/../lib/config.sh"
+source "$(dirname "$0")/../lib/worktree.sh"
+
+usage() {
+    cat <<'EOF'
+Usage: torc worktree <command> <args>
+
+Commands:
+  create <project-path> <executor-id>    Create a worktree for an executor
+  list <project-path>                    List all worktrees
+  remove <project-path> <executor-id>    Remove a worktree
+
+Examples:
+  torc worktree create ~/projects/my-app executor-1
+  torc worktree list ~/projects/my-app
+  torc worktree remove ~/projects/my-app executor-1
+EOF
+}
+
+if [ $# -eq 0 ] || [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+    usage
+    exit 0
+fi
+
+CMD="$1"
+shift
+
+case "$CMD" in
+    create)
+        if [ $# -lt 2 ]; then
+            echo "Usage: torc worktree create <project-path> <executor-id>"
+            exit 1
+        fi
+        PROJECT="$(cd "$1" && pwd)"
+        EXECUTOR_ID="$2"
+        echo "Creating worktree for $EXECUTOR_ID in $PROJECT..."
+        wt_path=$(worktree_create "$PROJECT" "$EXECUTOR_ID")
+        branch=$(worktree_branch "$wt_path")
+        echo "Worktree created:"
+        echo "  Path: $wt_path"
+        echo "  Branch: $branch"
+        ;;
+    list)
+        if [ $# -lt 1 ]; then
+            echo "Usage: torc worktree list <project-path>"
+            exit 1
+        fi
+        PROJECT="$(cd "$1" && pwd)"
+        worktree_list "$PROJECT"
+        ;;
+    remove)
+        if [ $# -lt 2 ]; then
+            echo "Usage: torc worktree remove <project-path> <executor-id>"
+            exit 1
+        fi
+        PROJECT="$(cd "$1" && pwd)"
+        EXECUTOR_ID="$2"
+        echo "Removing worktree for $EXECUTOR_ID..."
+        worktree_remove "$PROJECT" "$EXECUTOR_ID"
+        echo "Worktree removed."
+        ;;
+    *)
+        echo "Error: unknown worktree command '$CMD'" >&2
+        usage
+        exit 1
+        ;;
+esac

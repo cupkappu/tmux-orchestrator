@@ -1,0 +1,110 @@
+#!/bin/bash
+# torc-teardown - Shut down a team and clean up
+# Usage: torc teardown <team-name>
+
+set -euo pipefail
+source "$(dirname "$0")/../lib/config.sh"
+source "$(dirname "$0")/../lib/state.sh"
+source "$(dirname "$0")/../lib/tmux.sh"
+source "$(dirname "$0")/../lib/worktree.sh"
+
+usage() {
+    cat <<'EOF'
+Usage: torc teardown <team-name>
+
+Shut down a team: kill tmux session, remove worktrees, clean up state.
+
+WARNING: This will stop all agents in the team. Make sure all work is
+committed and reviewed before running this.
+
+Examples:
+  torc teardown my-app
+EOF
+}
+
+if [ $# -lt 1 ]; then
+    usage
+    exit 1
+fi
+
+TEAM_NAME="$1"
+
+if ! team_exists "$TEAM_NAME"; then
+    echo "Error: team '$TEAM_NAME' not found" >&2
+    exit 1
+fi
+
+# Get team info
+SESSION=$(team_field "$TEAM_NAME" "session")
+PROJECT_PATH=$(team_field "$TEAM_NAME" "project_path")
+AGENTS_JSON=$(team_field "$TEAM_NAME" "agents")
+
+echo "Tearing down team: $TEAM_NAME"
+echo "  Session: $SESSION"
+echo "  Project: $PROJECT_PATH"
+echo ""
+
+# Save conversation logs
+ensure_state_dirs
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+
+if tmux_session_exists "$SESSION"; then
+    echo "Saving agent logs..."
+
+    echo "$AGENTS_JSON" | python3 -c "
+import json, sys
+agents = json.load(sys.stdin)
+for agent_id, agent_data in agents.items():
+    window = agent_data.get('window')
+    if window:
+        print(f'{agent_id}:{window}')
+" 2>/dev/null | while IFS=: read -r agent_id window; do
+        log_file="$TORC_STATE_DIR/logs/${TEAM_NAME}_${agent_id}_${TIMESTAMP}.log"
+        tmux capture-pane -t "$SESSION:$window" -S - -E - -p > "$log_file" 2>/dev/null || true
+        echo "  Saved: $log_file"
+    done
+fi
+
+# Kill tmux session
+if tmux_session_exists "$SESSION"; then
+    echo ""
+    echo "Killing tmux session..."
+    tmux_kill_session "$SESSION"
+    echo "  Session killed"
+fi
+
+# Remove worktrees
+echo ""
+echo "Removing worktrees..."
+echo "$AGENTS_JSON" | python3 -c "
+import json, sys
+agents = json.load(sys.stdin)
+for agent_id, agent_data in agents.items():
+    if agent_data.get('role') == 'executor':
+        print(agent_id)
+" 2>/dev/null | while read -r executor_id; do
+    worktree_remove "$PROJECT_PATH" "$executor_id"
+    echo "  Removed worktree: $executor_id"
+done
+
+# Delete merged branches (optional - ask user)
+echo ""
+echo "Executor branches can be deleted if their work has been merged."
+echo "Delete merged executor branches? [y/N]"
+read -r response
+if [[ "$response" =~ ^[Yy]$ ]]; then
+    main_branch=$(get_main_branch "$PROJECT_PATH")
+    git -C "$PROJECT_PATH" branch --merged "$main_branch" | grep "executor-" | while read -r branch; do
+        git -C "$PROJECT_PATH" branch -d "$branch"
+        echo "  Deleted branch: $branch"
+    done
+fi
+
+# Remove team state
+echo ""
+echo "Removing team state..."
+remove_team_state "$TEAM_NAME"
+echo "  State removed"
+
+echo ""
+echo "✓ Teardown complete!"
