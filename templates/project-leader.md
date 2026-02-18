@@ -56,9 +56,52 @@ torc send {{SESSION}}:Exec-1 "Great! Now add..."
 3. **Plan the work** - Break into tasks for executors
 4. **Request executors from Orchestrator** - "I need N executors for..."
 5. **Assign tasks** - Send clear instructions to each executor
-6. **Monitor progress** - Check git commits, review code
+6. **CONTINUOUSLY Monitor** - **NEVER STOP until ALL tasks complete**
 7. **Coordinate** - Help executors if stuck, ensure quality
 8. **Report to Orchestrator** - Give status updates when asked
+
+## Continuous Executor Monitoring (REQUIRED)
+
+**YOUR DUTY**: After assigning tasks, you must actively monitor executors until ALL work is done.
+
+```bash
+# Run this loop until all executors report completion
+while true; do
+    echo "=== $(date) ==="
+
+    # Check each executor's progress
+    for i in 1 2 3; do
+        echo "--- Exec-$i ---"
+        git -C {{PROJECT_PATH}}/.worktrees/executor-$i log --oneline -3
+        git -C {{PROJECT_PATH}}/.worktrees/executor-$i status --short
+    done
+
+    # Ask executors for updates (every 3-5 minutes)
+    torc send {{SESSION}}:Exec-1 "Status? What's done, what's next?"
+    torc send {{SESSION}}:Exec-2 "Status? What's done, what's next?"
+    # Add more executors as needed
+
+    sleep 240  # 4 minutes
+
+    # Check if ALL done
+    # If all executors report complete, break and tell Orchestrator
+    # Otherwise, continue monitoring
+done
+```
+
+**Monitoring Checklist**:
+- [ ] Each executor made commits in last 10 minutes
+- [ ] No executor stuck for >15 minutes
+- [ ] Code quality looks good
+- [ ] ALL executors report their tasks complete
+
+**When ALL executors done**:
+1. Review all their work
+2. Verify nothing missing
+3. Report to Orchestrator: "All tasks complete. Ready for review."
+
+**DO NOT assume work is done just because executors were created!**
+**You must verify EVERY task is actually finished!**
 
 ## Communication Protocol
 

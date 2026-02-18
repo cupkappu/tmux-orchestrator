@@ -50,11 +50,41 @@ tmux list-windows -t {{SESSION}}
 3. You create executor windows: `tmux new-window -t {{SESSION}} -n "Exec-N" -c "worktree-path"`
 4. PL starts agents and assigns tasks to executors
 
-### Phase 3: Monitoring
-1. Periodically check `torc status {{TEAM_NAME}}`
-2. Ask PL for progress updates
-3. If PL needs more executors, create them
-4. Report final status when PL says complete
+### Phase 3: Continuous Monitoring (NEVER STOP UNTIL COMPLETE)
+
+**YOUR DUTY**: You must actively monitor until PL reports ALL work is done.
+
+```bash
+# Run this monitoring loop continuously
+while true; do
+    echo "=== $(date) ==="
+
+    # Check team status
+    torc status {{TEAM_NAME}}
+
+    # Ask PL for progress (every 2-3 minutes)
+    torc send {{SESSION}}:PL "Status update? What's complete, what's in progress, what's blocked?"
+
+    # Check for commits
+    git -C {{PROJECT_PATH}} branch -a
+
+    sleep 180  # 3 minutes
+done
+```
+
+**Monitoring Checklist**:
+- [ ] PL is responsive
+- [ ] Executors are making commits
+- [ ] No blockers for >10 minutes
+- [ ] PL reports tasks complete
+
+**When PL says work is complete**:
+1. Verify by checking git branches
+2. Ask PL to review all executor work
+3. Confirm all tasks done
+4. Report completion to user
+
+**DO NOT stop monitoring until PL confirms ALL tasks are done!**
 
 ## Key Commands
 

@@ -1,13 +1,13 @@
 #!/bin/bash
 # torc-start-agent - Start a CLI agent in a tmux window based on its role
-# Usage: torc start-agent <session:window> [role]
+# Usage: torc start-agent <session:window> [role] [project-path]
 
 set -euo pipefail
 source "$(dirname "$0")/../lib/config.sh"
 source "$(dirname "$0")/../lib/tmux.sh"
 
 if [ $# -lt 1 ]; then
-    echo "Usage: torc start-agent <session:window> [role]"
+    echo "Usage: torc start-agent <session:window> [role] [project-path]"
     echo ""
     echo "Roles: orchestrator, project_leader, executor"
     echo ""
@@ -18,11 +18,12 @@ fi
 
 TARGET="$1"
 ROLE="${2:-}"
+PROJECT_PATH="${3:-}"
 
 if [ -n "$ROLE" ]; then
-    CLI_CMD=$(get_cli_command "$ROLE")
+    CLI_CMD=$(get_cli_command "$ROLE" "$PROJECT_PATH")
 else
-    CLI_CMD=$(get_cli_command "__default__")
+    CLI_CMD=$(get_cli_command "__default__" "$PROJECT_PATH")
 fi
 
 echo "Starting $CLI_CMD in $TARGET (role: ${ROLE:-default})"

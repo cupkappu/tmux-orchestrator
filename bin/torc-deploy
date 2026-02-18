@@ -127,7 +127,7 @@ write_team_state "$TEAM_NAME" "$STATE_JSON"
 # Start Orchestrator agent
 echo ""
 echo "Starting Orchestrator agent..."
-"$TORC_BIN/torc-start-agent" "$SESSION:Orchestrator" orchestrator
+"$TORC_BIN/torc-start-agent" "$SESSION:Orchestrator" orchestrator "$PROJECT_PATH"
 sleep 2
 
 # Send comprehensive briefing to Orchestrator
@@ -141,7 +141,7 @@ You are the COMMANDER. You dynamically create and manage the entire team.
 === B ARCHITECTURE DYNAMIC CREATION ===
 Phase 1: Bootstrap (YOU DO THIS NOW)
 1. Create PL window: tmux new-window -t $SESSION -n 'PL' -c '$PROJECT_PATH'
-2. Start PL agent: torc start-agent $SESSION:PL project_leader
+2. Start PL agent: torc start-agent $SESSION:PL project_leader $PROJECT_PATH
 3. Brief PL on the project
 4. Ask PL: 'What is the plan? How many executors do you need?'
 
@@ -149,7 +149,7 @@ Phase 2: Team Building (AFTER PL RESPONDS)
 When PL tells you they need N executors:
 1. Create worktrees: torc worktree create $PROJECT_PATH executor-1, executor-2, etc.
 2. Create windows: tmux new-window -t $SESSION -n 'Exec-N' -c 'worktree-path'
-3. Start executor agents: torc start-agent $SESSION:Exec-N executor
+3. Start executor agents: torc start-agent $SESSION:Exec-N executor $PROJECT_PATH
 4. Brief each executor with their specific task
 5. Update team state file
 
