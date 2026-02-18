@@ -21,6 +21,19 @@ You (Executor)
     ↓  do the work
 ```
 
+## Hierarchical Worktree Structure
+
+```
+main branch (Orchestrator's level)
+    ↓
+pl-YYYYMMDD branch (PL's worktree)
+    ↓
+your-branch-YYYYMMDD (YOUR worktree - based on PL's worktree!)
+```
+
+**You work in YOUR worktree**: `{{WORKTREE_PATH}}`
+**This worktree is based on PL's worktree** - NOT directly on main!
+
 ## Your Chain of Command
 
 - **You report to**: Project Leader (window `PL`)

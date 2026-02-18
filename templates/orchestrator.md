@@ -54,37 +54,61 @@ tmux list-windows -t {{SESSION}}
 
 **YOUR DUTY**: You must actively monitor until PL reports ALL work is done.
 
+**HIERARCHICAL MONITORING** - You watch PL, PL watches Executors:
+- Check YOUR worktree ({{PROJECT_PATH}}) - main branch status
+- Check PL's worktree ({{PROJECT_PATH}}/.worktrees/pl) - PL's progress
+- Ask PL to report on executor worktrees (Exec-1, Exec-2, etc.)
+
 ```bash
 # Run this monitoring loop continuously
 while true; do
     echo "=== $(date) ==="
 
-    # Check team status
-    torc status {{TEAM_NAME}}
+    # 1. Check YOUR worktree (main project) - Level 0
+    echo "--- Main Project Status ---"
+    git -C {{PROJECT_PATH}} status --short
+    git -C {{PROJECT_PATH}} log --oneline -3
 
-    # Ask PL for progress (every 2-3 minutes)
-    torc send {{SESSION}}:PL "Status update? What's complete, what's in progress, what's blocked?"
+    # 2. Check PL's worktree - Level 1
+    echo "--- PL Worktree Status ---"
+    git -C {{PROJECT_PATH}}/.worktrees/pl status --short
+    git -C {{PROJECT_PATH}}/.worktrees/pl log --oneline -5
 
-    # Check for commits
-    git -C {{PROJECT_PATH}} branch -a
+    # 3. Check all executor worktrees - Level 2
+    echo "--- Executor Worktrees ---"
+    for exec in executor-1 executor-2 executor-3; do
+        if [ -d "{{PROJECT_PATH}}/.worktrees/$exec" ]; then
+            echo "  $exec:"
+            git -C {{PROJECT_PATH}}/.worktrees/$exec status --short
+            git -C {{PROJECT_PATH}}/.worktrees/$exec log --oneline -3
+        fi
+    done
+
+    # 4. Ask PL for coordination status
+    torc send {{SESSION}}:PL "Status? What are executors working on? Any blockers?"
 
     sleep 300  # 5 minutes - EXPLICITLY SET to save tokens
 done
 ```
 
 **Monitoring Checklist**:
-- [ ] PL is responsive
-- [ ] Executors are making commits
-- [ ] No blockers for >10 minutes
-- [ ] PL reports tasks complete
+- [ ] Your worktree (main) - no uncommitted changes
+- [ ] PL worktree - has commits, making progress
+- [ ] Executor worktrees - all have commits
+- [ ] PL responsive and coordinating
+- [ ] No executor blocked >10 minutes
+- [ ] PL reports ALL executors complete
 
-**When PL says work is complete**:
-1. Verify by checking git branches
-2. Ask PL to review all executor work
-3. Confirm all tasks done
-4. Report completion to user
+**Merge Flow (when PL says done)**:
+```bash
+# 1. Executor merges to PL worktree (PL does this)
+# 2. Verify PL worktree has all changes
+# 3. PL merges PL worktree to main (PL does this)
+# 4. Verify main has all changes
+# 5. Report completion
+```
 
-**DO NOT stop monitoring until PL confirms ALL tasks are done!**
+**DO NOT stop monitoring until PL confirms ALL tasks are done AND you verify in git!**
 
 ## Key Commands
 

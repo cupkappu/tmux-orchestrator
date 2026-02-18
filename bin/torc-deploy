@@ -89,12 +89,20 @@ echo ""
 # Resolve spec file path
 [ -n "$SPEC_FILE" ] && SPEC_FILE="$(cd "$(dirname "$SPEC_FILE")" && pwd)/$(basename "$SPEC_FILE")"
 
-# B ARCHITECTURE: Only create Orchestrator initially
-# Orchestrator will dynamically create PL and Executors
+# B ARCHITECTURE with HIERARCHICAL WORKTREES:
+# 1. Orchestrator created in main project
+# 2. PL worktree created from main, PL works there
+# 3. Executor worktrees created from PL's worktree
+# Hierarchy: main -> PL-worktree -> Executor-worktrees
 
 echo "Creating tmux session with Orchestrator..."
 tmux_create_session "$SESSION" "$PROJECT_PATH" "Orchestrator"
 sleep 0.5
+
+# Create PL worktree from main
+echo "Creating PL worktree..."
+PL_WORKTREE=$(worktree_create "$PROJECT_PATH" "pl")
+echo "  PL worktree: $PL_WORKTREE"
 
 # Get CLI for orchestrator
 ORCH_CLI=$(get_cli_command "orchestrator" "$PROJECT_PATH")

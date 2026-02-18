@@ -4,14 +4,16 @@
 
 WORKTREE_DIR=".worktrees"
 
-# Create a worktree for an executor
-# Usage: worktree_create <project-path> <executor-id>
+# Create a worktree for an agent
+# Usage: worktree_create <project-path> <agent-id> [base-branch]
+# If base-branch provided, creates worktree from that branch
 # Returns the worktree path
 worktree_create() {
     local project="$1"
-    local executor_id="$2"
-    local branch="${executor_id}-$(date +%Y%m%d)"
-    local wt_path="$project/$WORKTREE_DIR/$executor_id"
+    local agent_id="$2"
+    local base_branch="${3:-}"
+    local branch="${agent_id}-$(date +%Y%m%d)"
+    local wt_path="$project/$WORKTREE_DIR/$agent_id"
 
     # Ensure .worktrees is in .gitignore
     if [ -f "$project/.gitignore" ]; then
@@ -25,9 +27,28 @@ worktree_create() {
     # Create the worktree directory parent
     mkdir -p "$project/$WORKTREE_DIR"
 
-    # Create worktree with a new branch from current HEAD
-    git -C "$project" worktree add "$wt_path" -b "$branch" 2>&1
+    # Create worktree from base branch if provided, otherwise from HEAD
+    if [ -n "$base_branch" ]; then
+        git -C "$project" worktree add "$wt_path" -b "$branch" "$base_branch" 2>&1
+    else
+        git -C "$project" worktree add "$wt_path" -b "$branch" 2>&1
+    fi
     echo "$wt_path"
+}
+
+# Create executor worktree from PL's worktree
+# Usage: worktree_create_from_pl <project-path> <pl-worktree-path> <executor-id>
+worktree_create_from_pl() {
+    local project="$1"
+    local pl_worktree="$2"
+    local executor_id="$3"
+
+    # Get PL's branch
+    local pl_branch
+    pl_branch=$(git -C "$pl_worktree" branch --show-current 2>/dev/null)
+
+    # Create executor worktree from PL's branch
+    worktree_create "$project" "$executor_id" "$pl_branch"
 }
 
 # List worktrees for a project

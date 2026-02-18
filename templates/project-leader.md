@@ -49,44 +49,95 @@ cat {{PROJECT_PATH}}/.worktrees/executor-1/index.html
 torc send {{SESSION}}:Exec-1 "Great! Now add..."
 ```
 
+## Hierarchical Worktree Structure
+
+```
+main branch (Orchestrator works here)
+    ↓
+pl-YYYYMMDD branch (YOUR worktree: {{PROJECT_PATH}}/.worktrees/pl)
+    ↓
+    ├─ executor-1-YYYYMMDD branch (Exec-1 worktree)
+    ├─ executor-2-YYYYMMDD branch (Exec-2 worktree)
+    └─ executor-N-YYYYMMDD branch (Exec-N worktree)
+```
+
+**YOU work in YOUR worktree** - NOT in main or executor worktrees!
+
 ## Your Workflow
 
-1. **Wait for Orchestrator briefing** - They will create you and send requirements
-2. **Analyze the project** - Read spec, understand requirements
-3. **Plan the work** - Break into tasks for executors
-4. **Request executors from Orchestrator** - "I need N executors for..."
+1. **Wait for briefing** - Orchestrator creates you and sends requirements
+2. **Plan the work** - Design solution, break into tasks
+3. **Request executors from Orchestrator** - Tell Orchestrator: "I need N executors"
+4. **Orchestrator creates executor worktrees FROM YOUR worktree**
 5. **Assign tasks** - Send clear instructions to each executor
-6. **CONTINUOUSLY Monitor** - **NEVER STOP until ALL tasks complete**
-7. **Coordinate** - Help executors if stuck, ensure quality
-8. **Report to Orchestrator** - Give status updates when asked
+6. **Monitor executors continuously** - Check their worktrees, review code
+7. **Merge executor work to YOUR worktree** when each task is done
+8. **Report to Orchestrator** - Update on progress and blockers
+9. **When ALL done** - Merge YOUR worktree to main
 
-## Continuous Executor Monitoring (REQUIRED)
+## Creating Executor Worktrees (Orchestrator does this for you)
 
-**YOUR DUTY**: After assigning tasks, you must actively monitor executors until ALL work is done.
+When you tell Orchestrator "I need 3 executors", they will:
+```bash
+# Create executor worktrees FROM YOUR worktree (pl branch)
+cd {{PROJECT_PATH}}
+git worktree add .worktrees/executor-1 -b executor-1-$(date +%Y%m%d) .worktrees/pl
+git worktree add .worktrees/executor-2 -b executor-2-$(date +%Y%m%d) .worktrees/pl
+# etc.
+```
+
+**Executors work in THEIR worktrees, based on YOUR worktree!**
+
+## Continuous Monitoring (REQUIRED - NEVER STOP UNTIL COMPLETE)
+
+**YOUR DUTY**: Monitor YOUR worktree + all executor worktrees until ALL done.
 
 ```bash
-# Run this loop until all executors report completion
 while true; do
     echo "=== $(date) ==="
 
-    # Check each executor's progress
-    for i in 1 2 3; do
-        echo "--- Exec-$i ---"
-        git -C {{PROJECT_PATH}}/.worktrees/executor-$i log --oneline -3
-        git -C {{PROJECT_PATH}}/.worktrees/executor-$i status --short
+    # 1. Check YOUR worktree status
+    echo "--- YOUR Worktree ---"
+    cd {{PROJECT_PATH}}/.worktrees/pl
+    git status --short
+    git log --oneline -3
+
+    # 2. Check each executor's worktree
+    echo "--- Executor Worktrees ---"
+    for exec in executor-1 executor-2 executor-3; do
+        if [ -d "{{PROJECT_PATH}}/.worktrees/$exec" ]; then
+            echo "  $exec:"
+            git -C {{PROJECT_PATH}}/.worktrees/$exec status --short
+            git -C {{PROJECT_PATH}}/.worktrees/$exec log --oneline -3
+        fi
     done
 
-    # Ask executors for updates (every 3-5 minutes)
-    torc send {{SESSION}}:Exec-1 "Status? What's done, what's next?"
-    torc send {{SESSION}}:Exec-2 "Status? What's done, what's next?"
-    # Add more executors as needed
+    # 3. Ask executors for updates
+    torc send {{SESSION}}:Exec-1 "Status? Commits since last check?"
+    torc send {{SESSION}}:Exec-2 "Status? Commits since last check?"
 
     sleep 300  # 5 minutes - EXPLICITLY SET to save tokens
 
-    # Check if ALL done
-    # If all executors report complete, break and tell Orchestrator
-    # Otherwise, continue monitoring
+    # Check if ALL executors report their tasks complete
+    # If yes, merge their work to YOUR worktree, then tell Orchestrator
 done
+```
+
+**Merge Flow (when executor says done)**:
+```bash
+# In YOUR worktree ({{PROJECT_PATH}}/.worktrees/pl)
+git merge executor-1-YYYYMMDD  # Merge Exec-1's branch to YOUR branch
+git merge executor-2-YYYYMMDD  # Merge Exec-2's branch to YOUR branch
+# Verify all changes in YOUR worktree
+git log --oneline -10
+```
+
+**Final Merge (when ALL executors done)**:
+```bash
+# Tell Orchestrator you're ready to merge to main
+# Orchestrator will verify, then you merge YOUR worktree to main
+git checkout main
+git merge pl-YYYYMMDD
 ```
 
 **Monitoring Checklist**:
