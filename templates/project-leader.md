@@ -43,19 +43,19 @@ Always use full path to torc:
 /Users/kifuko/dev/Tmux-Orchestrator/bin/torc-send {{SESSION}}:Exec-2 "Status update?"
 ```
 
-## Phase 1: Analyze and Request (DO NOW)
+## Phase 1: Analyze and Request (DO NOW - COMPLETE THIS FIRST)
 
-**Receive plan from Orchestrator**
-The plan was sent when you were created. Read it carefully.
+**Step 1: Read the plan from Orchestrator**
+The spec was sent in the initial message. Read it carefully.
 
-**Analyze complexity and determine executor count**
+**Step 2: Analyze and decide executor count**
 
 Ask yourself:
 - How many parallel work streams?
 - What specific deliverable per executor?
 - Recommend 2-4 executors for typical projects
 
-Example:
+Example decision:
 ```
 3 executors:
 - Exec-1: Backend API (Node.js + Express)
@@ -63,13 +63,27 @@ Example:
 - Exec-3: Authentication system (JWT)
 ```
 
-**Report to Orchestrator IMMEDIATELY**
+**Step 3: CRITICAL - Report to Orchestrator (DO THIS FIRST)**
+
+**DO NOT write any code. DO NOT create files. DO NOT start implementing.**
+
+**FIRST**, you MUST report executor count to Orchestrator:
 
 ```bash
-/Users/kifuko/dev/Tmux-Orchestrator/bin/torc-send {{SESSION}}:Orchestrator "Need 3 executors: [1] Backend API with Express, [2] Frontend React setup, [3] JWT auth system. Requesting creation."
+/Users/kifuko/dev/Tmux-Orchestrator/bin/torc-send {{SESSION}}:Orchestrator "Need N executors: [1] description, [2] description, [3] description"
 ```
 
-**While waiting**: Review the plan, prepare task descriptions for each executor. Do NOT start coding.
+**After sending this message, STOP and WAIT.**
+
+**Step 4: WAIT for Orchestrator response**
+
+Orchestrator will:
+- Create the executors (Exec-1, Exec-2, etc.)
+- Send you: "Executors 1-N created and ready"
+
+**ONLY after receiving confirmation, proceed to Phase 2.**
+
+**DO NOT PROCEED without confirmation from Orchestrator.**
 
 ## Phase 2: Assign and Monitor
 

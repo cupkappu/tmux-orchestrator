@@ -164,7 +164,15 @@ git -C $PROJECT_PATH worktree add .worktrees/PL -b pl-\$(date +%Y%m%d)
 tmux new-window -t $SESSION -n 'PL' -c '$PROJECT_PATH/.worktrees/PL'
 $TORC_BIN/torc-start-agent $SESSION:PL project_leader $PROJECT_PATH
 sleep 2
-$TORC_BIN/torc-send $SESSION:PL \"You are Project Leader. Mission: build multi-user todo app with auth, real-time collaboration, nice UI. Analyze complexity, decide how many executors needed (recommend 2-4). Report executor count to Orchestrator via: $TORC_BIN/torc-send $SESSION:Orchestrator 'Need N executors: [breakdown]'. Start planning now.\"
+$TORC_BIN/torc-send $SESSION:PL \"You are Project Leader. Mission: build multi-user todo app with auth, real-time collaboration, nice UI. 
+
+CRITICAL: Follow this exact sequence:
+1. Analyze the spec and decide executor count (2-4 recommended)
+2. REPORT to Orchestrator FIRST using: $TORC_BIN/torc-send $SESSION:Orchestrator 'Need N executors: [list what each does]'
+3. STOP and WAIT for Orchestrator to create executors
+4. ONLY AFTER executors are created, assign tasks to them
+
+DO NOT write code or create files before reporting executor count to Orchestrator.\"
 
 === PHASE 2: CREATE EXECUTORS (When PL reports N) ===
 PL will message you: 'Need N executors...'
