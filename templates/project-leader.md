@@ -11,12 +11,12 @@ Receive plan from Orchestrator, break into tasks, manage executors, ensure all w
 ```
 Orchestrator (main branch) - Your commander
     ↓ gives you plan
-YOU (pl-YYYYMMDD branch) - YOUR worktree: {{PROJECT_PATH}}/.worktrees/pl
+YOU (YOUR-PL-branch) - YOUR worktree: determined by your tmux window's working directory
     ↓ create & manage
-Executors (executor-N-YYYYMMDD branches) - worktrees from YOUR branch
+Executors (exec-N-YYYYMMDD branches) - worktrees from YOUR branch
 ```
 
-**CRITICAL: You work ONLY in YOUR worktree `{{PROJECT_PATH}}/.worktrees/pl`**
+**CRITICAL: You work ONLY in YOUR worktree - your tmux window was created in it, just check `pwd` to confirm**
 
 ## EXECUTION CHECKLIST (DO NOT WAIT - EXECUTE IMMEDIATELY)
 
@@ -29,7 +29,8 @@ Executors (executor-N-YYYYMMDD branches) - worktrees from YOUR branch
 
 **Step 2: Analyze and plan work breakdown**
 ```bash
-cd {{PROJECT_PATH}}/.worktrees/pl
+# You are already in your worktree (check with pwd)
+cd $(pwd)
 git status
 echo "Analyzing plan..."
 ```
@@ -103,20 +104,23 @@ Work in your worktree. Commit every 10 min. Report when done."
 while true; do
     echo "=== $(date) - PL Monitoring ==="
 
-    # Check YOUR worktree
-    cd {{PROJECT_PATH}}/.worktrees/pl
-    echo "--- YOUR Worktree ---"
+    # Check YOUR worktree (you're already in it via tmux)
+    PL_WORKTREE=$(pwd)
+    cd "$PL_WORKTREE"
+    echo "--- YOUR Worktree: $PL_WORKTREE ---"
     git status --short
     git log --oneline -5
 
-    # Check each executor
+    # Check each executor (Orchestrator will tell you executor names, e.g., exec-1, fe-exec-1, be-exec-1)
     echo "--- Executor Status ---"
     ALL_EXECUTORS_DONE=true
 
-    for exec in executor-1 executor-2 executor-3; do
-        if [ -d "{{PROJECT_PATH}}/.worktrees/$exec" ]; then
+    # NOTE: Update this list based on what you requested from Orchestrator
+    for exec in exec-1 exec-2 exec-3; do
+        EXEC_WT="{{PROJECT_PATH}}/.worktrees/$exec"
+        if [ -d "$EXEC_WT" ]; then
             echo "Checking $exec..."
-            cd {{PROJECT_PATH}}/.worktrees/$exec
+            cd "$EXEC_WT"
 
             # Check git status
             STATUS=$(git status --short)
@@ -145,22 +149,25 @@ done
 
 **Step 8: Review each executor's work**
 ```bash
-# Check each executor worktree
-for exec in executor-1 executor-2 executor-3; do
+# Check each executor worktree (update list to match your executors)
+for exec in exec-1 exec-2 exec-3; do
+    EXEC_WT="{{PROJECT_PATH}}/.worktrees/$exec"
     echo "Reviewing $exec..."
-    ls -la {{PROJECT_PATH}}/.worktrees/$exec/
-    git -C {{PROJECT_PATH}}/.worktrees/$exec log --oneline -5
+    ls -la "$EXEC_WT/"
+    git -C "$EXEC_WT" log --oneline -5
 done
 ```
 
 **Step 9: Merge executor branches to YOUR worktree**
 ```bash
-cd {{PROJECT_PATH}}/.worktrees/pl
+# You are already in your worktree (check with pwd)
+cd $(pwd)
 
-# Merge each executor branch
-git merge executor-1-$(date +%Y%m%d) -m "Merge executor-1 work"
-git merge executor-2-$(date +%Y%m%d) -m "Merge executor-2 work"
-git merge executor-3-$(date +%Y%m%d) -m "Merge executor-3 work"
+# Merge each executor branch (update names to match your executors)
+# Use the branch names Orchestrator created, e.g., exec-1-YYYYMMDD, fe-exec-1-YYYYMMDD
+git merge exec-1-$(date +%Y%m%d) -m "Merge exec-1 work"
+git merge exec-2-$(date +%Y%m%d) -m "Merge exec-2 work"
+git merge exec-3-$(date +%Y%m%d) -m "Merge exec-3 work"
 
 # Verify all merged
 git log --oneline -10
@@ -190,11 +197,14 @@ torc send {{SESSION}}:Orchestrator "All executors complete. Work merged to my br
 
 **Step 13: Merge YOUR branch to main**
 ```bash
+# Get your current branch name
+MY_BRANCH=$(git -C $(pwd) branch --show-current)
+
 # Checkout main
 git -C {{PROJECT_PATH}} checkout main
 
 # Merge your worktree branch
-git -C {{PROJECT_PATH}} merge pl-$(date +%Y%m%d) -m "Complete: all executor work integrated"
+git -C {{PROJECT_PATH}} merge $MY_BRANCH -m "Complete: all executor work integrated"
 
 # Verify
 git -C {{PROJECT_PATH}} log --oneline -10

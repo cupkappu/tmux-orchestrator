@@ -141,49 +141,76 @@ sleep 2
 # Send comprehensive briefing to Orchestrator
 echo "Sending briefing to Orchestrator..."
 
-ORCH_BRIEFING="You are the AI Orchestrator for the '$PROJECT_NAME' project.
+USER_PLAN="${SPEC_FILE_CONTENT:-'Create a project showcase site. Plan and execute autonomously.'}"
 
-=== YOUR ROLE ===
-You are the COMMANDER. You dynamically create and manage the entire team.
+ORCH_BRIEFING="=== USER'S PLAN ===
+$USER_PLAN
 
-=== B ARCHITECTURE DYNAMIC CREATION ===
-Phase 1: Bootstrap (YOU DO THIS NOW)
-1. Create PL window: tmux new-window -t $SESSION -n 'PL' -c '$PROJECT_PATH'
-2. Start PL agent: torc start-agent $SESSION:PL project_leader $PROJECT_PATH
-3. Brief PL on the project
-4. Ask PL: 'What is the plan? How many executors do you need?'
+=== YOUR MISSION ===
+Execute the above plan. Create team, monitor progress, ensure completion.
 
-Phase 2: Team Building (AFTER PL RESPONDS)
-When PL tells you they need N executors:
-1. Create worktrees: torc worktree create $PROJECT_PATH executor-1, executor-2, etc.
-2. Create windows: tmux new-window -t $SESSION -n 'Exec-N' -c 'worktree-path'
-3. Start executor agents: torc start-agent $SESSION:Exec-N executor $PROJECT_PATH
-4. Brief each executor with their specific task
-5. Update team state file
+=== PHASE 1: BOOTSTRAP (DO NOW) ===
+Step 1: Create PL worktree from main, then PL window
+git -C $PROJECT_PATH worktree add .worktrees/pl -b pl-\$(date +%Y%m%d)
+tmux new-window -t $SESSION -n 'PL' -c '$PROJECT_PATH/.worktrees/pl'
 
-Phase 3: Monitoring
-- Check status: torc status $TEAM_NAME
-- Coordinate via PL (not directly with executors)
-- Scale up if PL requests more executors
+Step 2: Start PL agent
+torc start-agent \$SESSION:PL project_leader $PROJECT_PATH
 
-=== PROJECT INFO ===
-Project: $PROJECT_NAME
-Path: $PROJECT_PATH
-Session: $SESSION
-Spec file: ${SPEC_FILE:-'(none provided)'}
+Step 3: Send plan to PL (include the user's plan above)
+torc send \$SESSION:PL 'Execute this plan: $USER_PLAN. Plan the work, break into tasks, tell me how many executors you need. Start immediately.'
 
-=== AVAILABLE COMMANDS ===
-tmux new-window -t $SESSION -n 'WindowName' -c '$PROJECT_PATH'
-torc start-agent $SESSION:WindowName role
-torc worktree create $PROJECT_PATH executor-id
-torc status $TEAM_NAME
-torc send $SESSION:WindowName 'message'
-tmux list-windows -t $SESSION
+=== PHASE 2: CREATE EXECUTORS (When PL responds with N) ===
+For i in 1..N:
+  git -C $PROJECT_PATH worktree add .worktrees/executor-\$i -b executor-\$i-\$(date +%Y%m%d) .worktrees/pl
+  tmux new-window -t \$SESSION -n "Exec-\$i" -c "$PROJECT_PATH/.worktrees/executor-\$i"
+  torc start-agent \$SESSION:Exec-\$i executor $PROJECT_PATH
+
+=== PHASE 3: MONITOR UNTIL COMPLETE ===
+while true; do
+  # Check main branch
+  git -C $PROJECT_PATH status --short; git -C $PROJECT_PATH log --oneline -3
+
+  # Check PL worktree
+  git -C $PROJECT_PATH/.worktrees/pl status --short
+  git -C $PROJECT_PATH/.worktrees/pl log --oneline -5
+
+  # Check all executor worktrees
+  for exec in executor-1 executor-2 executor-3; do
+    if [ -d \"$PROJECT_PATH/.worktrees/\$exec\" ]; then
+      git -C $PROJECT_PATH/.worktrees/\$exec log --oneline | wc -l
+    fi
+  done
+
+  # Ask PL: which executors done?
+  torc send \$SESSION:PL 'Status: Which executors have completed?'
+
+  # If PL says ALL done → Phase 4
+  sleep 300
+done
+
+=== PHASE 4: MERGE ===
+Step 8: PL merges executor branches to their worktree
+git -C $PROJECT_PATH/.worktrees/pl merge executor-N-YYYYMMDD
+
+Step 9: PL merges to main
+git -C $PROJECT_PATH checkout main
+git -C $PROJECT_PATH merge pl-YYYYMMDD
+
+Step 10: Report to user
+'All tasks complete. Work merged to main.'
+
+=== COMPLETION RULES ===
+Task NOT complete until:
+- [ ] All executors committed files
+- [ ] All executor branches merged to PL worktree
+- [ ] PL worktree merged to main
+- [ ] You verified main has all changes
+
+DO NOT STOP until ALL checked!
 
 === START NOW ===
-1. Create the PL window and start PL agent
-2. Brief PL on this project
-3. Ask for their plan and executor requirements"
+Execute Phase 1 immediately. Do not wait."
 
 # Send briefing line by line to avoid issues
 echo "$ORCH_BRIEFING" | while IFS= read -r line; do
