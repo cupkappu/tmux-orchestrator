@@ -45,6 +45,15 @@ Team state stored in `~/.tmux-orchestrator/state/teams/<name>.json`:
 3. Update `torc` dispatcher if new top-level command
 4. Optionally create skill in `skills/torc-<name>/SKILL.md`
 
+## Skills
+
+- **/torc-start** - Conversational guide to start a new project (help define scope, generate spec, deploy)
+- **/torc-deploy-team** - Deploy a team with worktrees
+- **/torc-pm-oversight** - Run PL oversight loop
+- **/torc-team-status** - Check all teams
+- **/torc-review-work** - Review executor commits
+- **/torc-send-message** - Send message to agent
+
 ## Testing
 
 ```bash
