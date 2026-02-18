@@ -25,9 +25,9 @@ EOF
 }
 
 # Parse arguments
-EXECUTORS=1
 SPEC_FILE=""
 PROJECT_PATH=""
+EXECUTORS=""  # Will be set after loading config
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -50,6 +50,18 @@ PROJECT_PATH="$(cd "$PROJECT_PATH" && pwd)"
 PROJECT_NAME="$(basename "$PROJECT_PATH")"
 SESSION="torc-$PROJECT_NAME"
 TEAM_NAME="$PROJECT_NAME"
+
+# Load project-level config defaults if not specified
+PROJECT_CONFIG=$(find_project_config "$PROJECT_PATH")
+if [ -n "$PROJECT_CONFIG" ]; then
+    echo "✓ Found project config: $PROJECT_CONFIG"
+fi
+
+# Set default executors from config if not provided
+if [ -z "$EXECUTORS" ]; then
+    EXECUTORS=$(get_default_executors "$PROJECT_PATH")
+    echo "  Using default executors: $EXECUTORS"
+fi
 
 # Validate it's a git repo
 if ! git -C "$PROJECT_PATH" rev-parse --git-dir >/dev/null 2>&1; then
@@ -98,8 +110,8 @@ tmux_create_window "$SESSION" "Orchestrator" "$PROJECT_PATH"
 
 # 3. Create worktrees and windows for each executor
 AGENTS_JSON="{}"
-PL_CLI=$(get_cli_command "project_leader")
-ORCH_CLI=$(get_cli_command "orchestrator")
+PL_CLI=$(get_cli_command "project_leader" "$PROJECT_PATH")
+ORCH_CLI=$(get_cli_command "orchestrator" "$PROJECT_PATH")
 AGENTS_JSON=$(python3 -c "
 import json
 agents = {
@@ -120,7 +132,7 @@ for i in $(seq 1 "$EXECUTORS"); do
     echo "Creating window $WINDOW_NAME..."
     tmux_create_window "$SESSION" "$WINDOW_NAME" "$wt_path"
 
-    EXEC_CLI=$(get_cli_command "executor")
+    EXEC_CLI=$(get_cli_command "executor" "$PROJECT_PATH")
     AGENTS_JSON=$(python3 -c "
 import json
 agents = json.loads('$AGENTS_JSON')

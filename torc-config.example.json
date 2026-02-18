@@ -1,0 +1,29 @@
+{
+  "_comment": "Project-level Tmux Orchestrator config",
+  "_comment2": "Place this as 'torc-config.json' in your project root",
+  "cli_tools": {
+    "claude": {
+      "name": "Claude Code",
+      "start_command": "claude"
+    },
+    "kimi": {
+      "name": "Kimi CLI",
+      "start_command": "kimi"
+    }
+  },
+  "roles": {
+    "orchestrator": {
+      "cli": "claude"
+    },
+    "project_leader": {
+      "cli": "claude"
+    },
+    "executor": {
+      "cli": "kimi"
+    }
+  },
+  "defaults": {
+    "cli": "claude",
+    "executors": 2
+  }
+}

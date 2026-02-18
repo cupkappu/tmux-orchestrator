@@ -7,14 +7,39 @@ TORC_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ORCHESTRATOR_CONFIG="${ORCHESTRATOR_CONFIG:-"$TORC_ROOT/orchestrator-config.json"}"
 TORC_STATE_DIR="${TORC_STATE_DIR:-"$HOME/.tmux-orchestrator"}"
 
+# Project-level config filename
+PROJECT_CONFIG_FILE="torc-config.json"
+
+# Find project-level config
+# Usage: find_project_config <project-path>
+find_project_config() {
+    local project_path="$1"
+    local config_path="$project_path/$PROJECT_CONFIG_FILE"
+    if [ -f "$config_path" ]; then
+        echo "$config_path"
+    else
+        echo ""
+    fi
+}
+
 # Get the CLI start command for a given role
-# Usage: get_cli_command <role>
+# Usage: get_cli_command <role> [project-path]
 # Falls back to "claude" if config is missing or role not found
+# If project-path provided, checks for project-level config first
 get_cli_command() {
     local role="$1"
+    local project_path="${2:-}"
     local default_cli="claude"
+    local config_file="$ORCHESTRATOR_CONFIG"
 
-    if [ ! -f "$ORCHESTRATOR_CONFIG" ]; then
+    # Check for project-level config
+    if [ -n "$project_path" ]; then
+        local project_config
+        project_config=$(find_project_config "$project_path")
+        [ -n "$project_config" ] && config_file="$project_config"
+    fi
+
+    if [ ! -f "$config_file" ]; then
         echo "$default_cli"
         return
     fi
@@ -23,7 +48,7 @@ get_cli_command() {
     result=$(python3 -c "
 import json, sys
 try:
-    with open('$ORCHESTRATOR_CONFIG') as f:
+    with open('$config_file') as f:
         config = json.load(f)
     role = '$role'
     default_cli = config.get('defaults', {}).get('cli', 'claude')
@@ -35,6 +60,35 @@ except Exception:
 " 2>/dev/null)
 
     echo "${result:-$default_cli}"
+}
+
+# Get default executors count
+# Usage: get_default_executors [project-path]
+get_default_executors() {
+    local project_path="${1:-}"
+    local config_file="$ORCHESTRATOR_CONFIG"
+
+    # Check for project-level config
+    if [ -n "$project_path" ]; then
+        local project_config
+        project_config=$(find_project_config "$project_path")
+        [ -n "$project_config" ] && config_file="$project_config"
+    fi
+
+    if [ ! -f "$config_file" ]; then
+        echo "1"
+        return
+    fi
+
+    python3 -c "
+import json
+try:
+    with open('$config_file') as f:
+        config = json.load(f)
+    print(config.get('defaults', {}).get('executors', 1))
+except Exception:
+    print('1')
+" 2>/dev/null
 }
 
 # List all available CLI tools
