@@ -3,10 +3,11 @@
 # Usage: torc deploy <project-path> [--executors <N>] [--spec <file>]
 
 set -euo pipefail
-source "$(dirname "$0")/../lib/config.sh"
-source "$(dirname "$0")/../lib/state.sh"
-source "$(dirname "$0")/../lib/tmux.sh"
-source "$(dirname "$0")/../lib/worktree.sh"
+TORC_BIN="$(cd "$(dirname "$0")" && pwd)"
+source "$TORC_BIN/../lib/config.sh"
+source "$TORC_BIN/../lib/state.sh"
+source "$TORC_BIN/../lib/tmux.sh"
+source "$TORC_BIN/../lib/worktree.sh"
 
 usage() {
     cat <<'EOF'
@@ -68,6 +69,15 @@ if tmux_session_exists "$SESSION"; then
     exit 1
 fi
 
+# Check if running inside tmux and warn about potential conflicts
+if [ -n "${TMUX:-}" ]; then
+    CURRENT_SESSION=$(tmux display-message -p '#{session_name}' 2>/dev/null || echo "unknown")
+    echo "⚠️  Warning: You are currently inside tmux session '$CURRENT_SESSION'"
+    echo "    Tmux Orchestrator will create a new session '$SESSION'"
+    echo "    Your current session will not be affected."
+    echo ""
+fi
+
 echo "Deploying team '$TEAM_NAME' for $PROJECT_PATH"
 echo "  Session: $SESSION"
 echo "  Executors: $EXECUTORS"
@@ -79,15 +89,23 @@ echo ""
 
 # 1. Create tmux session with PL window
 echo "Creating tmux session..."
-tmux_create_session "$SESSION" "$PROJECT_PATH"
-tmux rename-window -t "$SESSION:0" "PL"
+tmux_create_session "$SESSION" "$PROJECT_PATH" "PL"
+sleep 0.5
 
-# 2. Create worktrees and windows for each executor
+# 2. Create Orchestrator window (in project path for access to git)
+echo "Creating Orchestrator window..."
+tmux_create_window "$SESSION" "Orchestrator" "$PROJECT_PATH"
+
+# 3. Create worktrees and windows for each executor
 AGENTS_JSON="{}"
 PL_CLI=$(get_cli_command "project_leader")
+ORCH_CLI=$(get_cli_command "orchestrator")
 AGENTS_JSON=$(python3 -c "
 import json
-agents = {'pl': {'window': 'PL', 'cli': '$PL_CLI', 'role': 'project_leader'}}
+agents = {
+    'pl': {'window': 'PL', 'cli': '$PL_CLI', 'role': 'project_leader'},
+    'orchestrator': {'window': 'Orchestrator', 'cli': '$ORCH_CLI', 'role': 'orchestrator'}
+}
 print(json.dumps(agents))
 ")
 
@@ -137,6 +155,10 @@ write_team_state "$TEAM_NAME" "$STATE_JSON"
 echo ""
 echo "Starting agents..."
 
+# Start Orchestrator first
+"$TORC_BIN/torc-start-agent" "$SESSION:Orchestrator" orchestrator
+sleep 1
+
 # Start PL
 "$TORC_BIN/torc-start-agent" "$SESSION:PL" project_leader
 sleep 2
@@ -151,6 +173,36 @@ done
 echo ""
 echo "Waiting for agents to initialize..."
 sleep 5
+
+# Build executor list for orchestrator briefing
+EXECUTOR_LIST=""
+for i in $(seq 1 "$EXECUTORS"); do
+    EXECUTOR_LIST="$EXECUTOR_LIST- Window 'Exec-$i': Executor $i\n"
+done
+
+# Brief Orchestrator
+ORCH_BRIEFING="You are the AI Orchestrator for the '$PROJECT_NAME' project.
+
+Your responsibilities:
+1. Monitor team status every 5 minutes using: torc status $TEAM_NAME
+2. Coordinate with the Project Leader (PL) for task assignment
+3. Track executor progress via git worktrees
+4. Identify blockers and facilitate communication
+
+Team layout (tmux session: $SESSION):
+- Window 'Orchestrator': You (AI Orchestrator)
+- Window 'PL': Project Leader
+$EXECUTOR_LIST
+
+Useful commands:
+  torc status $TEAM_NAME
+  torc send $SESSION:PL 'Status update?'
+  git -C $PROJECT_PATH/.worktrees/executor-N log --oneline -5
+
+Start by asking PL: 'What's the plan for this project?'"
+
+tmux_send "$SESSION:Orchestrator" "$ORCH_BRIEFING"
+sleep 2
 
 # Brief PL
 PL_BRIEFING="You are the Project Leader for the '$PROJECT_NAME' project.
@@ -215,7 +267,11 @@ echo ""
 echo "State: $(team_state_file "$TEAM_NAME")"
 echo ""
 echo "Next steps:"
-echo "  torc status $TEAM_NAME        # Check team status"
-echo "  torc send $SESSION:PL 'msg'   # Message the project leader"
-echo "  torc review $TEAM_NAME        # Review executor work"
-echo "  torc teardown $TEAM_NAME      # Shut down when done"
+echo "  torc status $TEAM_NAME                    # Check team status"
+echo "  torc send $SESSION:Orchestrator 'msg'    # Message the orchestrator"
+echo "  torc send $SESSION:PL 'msg'              # Message the project leader"
+echo "  torc review $TEAM_NAME                    # Review executor work"
+echo "  torc teardown $TEAM_NAME                  # Shut down when done"
+echo ""
+echo "The Orchestrator agent is monitoring the team automatically."
+echo "Attach to watch: tmux attach -t $SESSION"

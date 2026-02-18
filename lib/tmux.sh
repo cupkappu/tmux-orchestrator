@@ -8,10 +8,15 @@ tmux_session_exists() {
     tmux has-session -t "$1" 2>/dev/null
 }
 
-# Create a new tmux session
-# Usage: tmux_create_session <session-name> <working-dir>
+# Create a new tmux session with initial window name
+# Usage: tmux_create_session <session-name> <working-dir> [window-name]
 tmux_create_session() {
-    tmux new-session -d -s "$1" -c "$2"
+    local window_name="${3:-}"
+    if [ -n "$window_name" ]; then
+        tmux new-session -d -s "$1" -c "$2" -n "$window_name"
+    else
+        tmux new-session -d -s "$1" -c "$2"
+    fi
 }
 
 # Create a new tmux window

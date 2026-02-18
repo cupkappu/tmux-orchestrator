@@ -14,20 +14,40 @@
     }
   },
   "roles": {
-    "orchestrator": { "cli": "claude" },
-    "project_leader": { "cli": "claude" },
-    "executor": { "cli": "claude" },
-    "project_manager": { "cli": "claude" },
-    "developer": { "cli": "kimi" },
-    "qa": { "cli": "opencode" },
-    "devops": { "cli": "claude" },
-    "code_reviewer": { "cli": "claude" },
-    "researcher": { "cli": "opencode" },
-    "documentation_writer": { "cli": "kimi" }
+    "orchestrator": {
+      "cli": "claude"
+    },
+    "project_leader": {
+      "cli": "claude"
+    },
+    "executor": {
+      "cli": "kimi"
+    },
+    "project_manager": {
+      "cli": "claude"
+    },
+    "developer": {
+      "cli": "kimi"
+    },
+    "qa": {
+      "cli": "opencode"
+    },
+    "devops": {
+      "cli": "claude"
+    },
+    "code_reviewer": {
+      "cli": "claude"
+    },
+    "researcher": {
+      "cli": "opencode"
+    },
+    "documentation_writer": {
+      "cli": "kimi"
+    }
   },
   "defaults": {
     "cli": "claude",
     "executors": 1,
-    "state_dir": "~/.tmux-orchestrator"
+    "state_dir": "/Users/kifuko/.tmux-orchestrator"
   }
 }

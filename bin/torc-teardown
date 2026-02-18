@@ -44,6 +44,17 @@ echo "  Session: $SESSION"
 echo "  Project: $PROJECT_PATH"
 echo ""
 
+# Safety check: don't kill the user's current tmux session
+if [ -n "${TMUX:-}" ]; then
+    CURRENT_SESSION=$(tmux display-message -p '#{session_name}' 2>/dev/null || echo "")
+    if [ "$CURRENT_SESSION" = "$SESSION" ]; then
+        echo "Error: You are currently inside the tmux session '$SESSION'" >&2
+        echo "       Please detach from this session before tearing it down." >&2
+        echo "       Run: tmux detach" >&2
+        exit 1
+    fi
+fi
+
 # Save conversation logs
 ensure_state_dirs
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
