@@ -1,5 +1,13 @@
 {
   "cli_tools": {
+    "claude": {
+      "name": "Claude Code",
+      "start_command": "claude"
+    },
+    "kimi": {
+      "name": "Kimi CLI",
+      "start_command": "kimi"
+    },
     "opencode": {
       "name": "OpenCode",
       "start_command": "opencode"
@@ -7,38 +15,17 @@
   },
   "roles": {
     "orchestrator": {
-      "cli": "opencode"
+      "cli": "claude"
     },
     "project_leader": {
-      "cli": "opencode"
+      "cli": "kimi"
     },
     "executor": {
-      "cli": "opencode"
-    },
-    "project_manager": {
-      "cli": "opencode"
-    },
-    "developer": {
-      "cli": "opencode"
-    },
-    "qa": {
-      "cli": "opencode"
-    },
-    "devops": {
-      "cli": "opencode"
-    },
-    "code_reviewer": {
-      "cli": "opencode"
-    },
-    "researcher": {
-      "cli": "opencode"
-    },
-    "documentation_writer": {
       "cli": "opencode"
     }
   },
   "defaults": {
-    "cli": "opencode",
+    "cli": "claude",
     "state_dir": "/Users/kifuko/.tmux-orchestrator"
   }
 }
