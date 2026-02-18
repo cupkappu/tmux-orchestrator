@@ -2,11 +2,11 @@
   "cli_tools": {
     "claude": {
       "name": "Claude Code",
-      "start_command": "claude"
+      "start_command": "claude --dangerously-skip-permissions"
     },
     "kimi": {
       "name": "Kimi CLI",
-      "start_command": "kimi"
+      "start_command": "kimi --yolo"
     },
     "opencode": {
       "name": "OpenCode",

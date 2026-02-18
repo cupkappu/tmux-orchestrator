@@ -68,35 +68,14 @@ else
     echo "  Manually add to PATH: export PATH=\"$SCRIPT_DIR/bin:\$PATH\""
 fi
 
-# 5. Update orchestrator-config.json
 echo ""
-echo "Updating config..."
+echo "Setting up config..."
+mkdir -p "$STATE_DIR"
 if [ -f "$SCRIPT_DIR/orchestrator-config.json" ]; then
-    # Update config to include state_dir and simplified roles
-    python3 - <<EOF
-import json
-
-config_path = "$SCRIPT_DIR/orchestrator-config.json"
-with open(config_path) as f:
-    config = json.load(f)
-
-# Update defaults
-config.setdefault('defaults', {})
-config['defaults']['state_dir'] = "$STATE_DIR"
-
-# Simplify roles (keep backward compatibility)
-if 'project_manager' in config.get('roles', {}):
-    config['roles']['project_leader'] = config['roles']['project_manager']
-
-if 'developer' in config.get('roles', {}):
-    config['roles']['executor'] = config['roles']['developer']
-
-# Write back
-with open(config_path, 'w') as f:
-    json.dump(config, f, indent=2)
-
-print("  ✓ Config updated")
-EOF
+    cp "$SCRIPT_DIR/orchestrator-config.json" "$STATE_DIR/orchestrator-config.json"
+    echo "  ✓ Config copied to $STATE_DIR/orchestrator-config.json"
+else
+    echo "  ⚠ No config found, using defaults"
 fi
 
 echo ""

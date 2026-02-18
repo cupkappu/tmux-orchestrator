@@ -4,8 +4,8 @@
 
 # Resolve paths
 TORC_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ORCHESTRATOR_CONFIG="${ORCHESTRATOR_CONFIG:-"$TORC_ROOT/orchestrator-config.json"}"
 TORC_STATE_DIR="${TORC_STATE_DIR:-"$HOME/.tmux-orchestrator"}"
+ORCHESTRATOR_CONFIG="${ORCHESTRATOR_CONFIG:-"$TORC_STATE_DIR/orchestrator-config.json"}"
 
 # Project-level config filename
 PROJECT_CONFIG_FILE="torc-config.json"
