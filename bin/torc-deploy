@@ -1,6 +1,12 @@
 #!/bin/bash
-# torc-deploy - Deploy a multi-agent team for a project
-# Usage: torc deploy <project-path> [--executors <N>] [--spec <file>]
+# torc-deploy - Deploy a multi-agent team for a project (B Architecture: Dynamic Creation)
+# Usage: torc deploy <project-path> [--spec <file>]
+#
+# B Architecture:
+# 1. Only Orchestrator is created initially
+# 2. Orchestrator dynamically creates PL
+# 3. PL requests executors from Orchestrator
+# 4. Orchestrator creates executors as needed
 
 set -euo pipefail
 TORC_BIN="$(cd "$(dirname "$0")" && pwd)"
@@ -14,25 +20,21 @@ usage() {
 Usage: torc deploy <project-path> [options]
 
 Options:
-  --executors <N>    Number of executor agents (default: 1)
   --spec <file>      Spec/requirements file to brief agents with
 
 Examples:
   torc deploy ~/projects/my-app
-  torc deploy ~/projects/my-app --executors 2
-  torc deploy ~/projects/my-app --spec ~/specs/feature.md --executors 3
+  torc deploy ~/projects/my-app --spec ~/specs/feature.md
 EOF
 }
 
 # Parse arguments
 SPEC_FILE=""
 PROJECT_PATH=""
-EXECUTORS=""  # Will be set after loading config
 
 while [ $# -gt 0 ]; do
     case "$1" in
         -h|--help) usage; exit 0 ;;
-        --executors) EXECUTORS="$2"; shift 2 ;;
         --spec) SPEC_FILE="$2"; shift 2 ;;
         -*) echo "Unknown option: $1" >&2; exit 1 ;;
         *) PROJECT_PATH="$1"; shift ;;
@@ -50,18 +52,6 @@ PROJECT_PATH="$(cd "$PROJECT_PATH" && pwd)"
 PROJECT_NAME="$(basename "$PROJECT_PATH")"
 SESSION="torc-$PROJECT_NAME"
 TEAM_NAME="$PROJECT_NAME"
-
-# Load project-level config defaults if not specified
-PROJECT_CONFIG=$(find_project_config "$PROJECT_PATH")
-if [ -n "$PROJECT_CONFIG" ]; then
-    echo "✓ Found project config: $PROJECT_CONFIG"
-fi
-
-# Set default executors from config if not provided
-if [ -z "$EXECUTORS" ]; then
-    EXECUTORS=$(get_default_executors "$PROJECT_PATH")
-    echo "  Using default executors: $EXECUTORS"
-fi
 
 # Validate it's a git repo
 if ! git -C "$PROJECT_PATH" rev-parse --git-dir >/dev/null 2>&1; then
@@ -81,7 +71,7 @@ if tmux_session_exists "$SESSION"; then
     exit 1
 fi
 
-# Check if running inside tmux and warn about potential conflicts
+# Check if running inside tmux and warn
 if [ -n "${TMUX:-}" ]; then
     CURRENT_SESSION=$(tmux display-message -p '#{session_name}' 2>/dev/null || echo "unknown")
     echo "⚠️  Warning: You are currently inside tmux session '$CURRENT_SESSION'"
@@ -92,62 +82,24 @@ fi
 
 echo "Deploying team '$TEAM_NAME' for $PROJECT_PATH"
 echo "  Session: $SESSION"
-echo "  Executors: $EXECUTORS"
+echo "  Architecture: B (Dynamic Creation - Orchestrator bootstraps team)"
 [ -n "$SPEC_FILE" ] && echo "  Spec: $SPEC_FILE"
 echo ""
 
 # Resolve spec file path
 [ -n "$SPEC_FILE" ] && SPEC_FILE="$(cd "$(dirname "$SPEC_FILE")" && pwd)/$(basename "$SPEC_FILE")"
 
-# 1. Create tmux session with PL window
-echo "Creating tmux session..."
-tmux_create_session "$SESSION" "$PROJECT_PATH" "PL"
+# B ARCHITECTURE: Only create Orchestrator initially
+# Orchestrator will dynamically create PL and Executors
+
+echo "Creating tmux session with Orchestrator..."
+tmux_create_session "$SESSION" "$PROJECT_PATH" "Orchestrator"
 sleep 0.5
 
-# 2. Create Orchestrator window (in project path for access to git)
-echo "Creating Orchestrator window..."
-tmux_create_window "$SESSION" "Orchestrator" "$PROJECT_PATH"
-
-# 3. Create worktrees and windows for each executor
-AGENTS_JSON="{}"
-PL_CLI=$(get_cli_command "project_leader" "$PROJECT_PATH")
+# Get CLI for orchestrator
 ORCH_CLI=$(get_cli_command "orchestrator" "$PROJECT_PATH")
-AGENTS_JSON=$(python3 -c "
-import json
-agents = {
-    'pl': {'window': 'PL', 'cli': '$PL_CLI', 'role': 'project_leader'},
-    'orchestrator': {'window': 'Orchestrator', 'cli': '$ORCH_CLI', 'role': 'orchestrator'}
-}
-print(json.dumps(agents))
-")
 
-for i in $(seq 1 "$EXECUTORS"); do
-    EXEC_ID="executor-$i"
-    WINDOW_NAME="Exec-$i"
-
-    echo "Creating worktree for $EXEC_ID..."
-    wt_path=$(worktree_create "$PROJECT_PATH" "$EXEC_ID")
-    branch=$(worktree_branch "$wt_path")
-
-    echo "Creating window $WINDOW_NAME..."
-    tmux_create_window "$SESSION" "$WINDOW_NAME" "$wt_path"
-
-    EXEC_CLI=$(get_cli_command "executor" "$PROJECT_PATH")
-    AGENTS_JSON=$(python3 -c "
-import json
-agents = json.loads('$AGENTS_JSON')
-agents['$EXEC_ID'] = {
-    'window': '$WINDOW_NAME',
-    'cli': '$EXEC_CLI',
-    'role': 'executor',
-    'worktree': '.worktrees/$EXEC_ID',
-    'branch': '$branch'
-}
-print(json.dumps(agents))
-")
-done
-
-# 3. Write team state
+# Write initial team state (only orchestrator)
 CREATED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 STATE_JSON=$(python3 -c "
 import json
@@ -157,133 +109,95 @@ state = {
     'session': '$SESSION',
     'created_at': '$CREATED_AT',
     'spec_file': '$SPEC_FILE',
-    'agents': json.loads('$AGENTS_JSON')
+    'agents': {
+        'orchestrator': {
+            'window': 'Orchestrator',
+            'cli': '$ORCH_CLI',
+            'role': 'orchestrator'
+        }
+    },
+    'dynamic_creation': True,
+    'executors_needed': 0,
+    'executors_created': []
 }
 print(json.dumps(state, indent=2))
 ")
 write_team_state "$TEAM_NAME" "$STATE_JSON"
 
-# 4. Start agents
+# Start Orchestrator agent
 echo ""
-echo "Starting agents..."
-
-# Start Orchestrator first
+echo "Starting Orchestrator agent..."
 "$TORC_BIN/torc-start-agent" "$SESSION:Orchestrator" orchestrator
-sleep 1
-
-# Start PL
-"$TORC_BIN/torc-start-agent" "$SESSION:PL" project_leader
 sleep 2
 
-# Start executors
-for i in $(seq 1 "$EXECUTORS"); do
-    "$TORC_BIN/torc-start-agent" "$SESSION:Exec-$i" executor
-    sleep 1
-done
+# Send comprehensive briefing to Orchestrator
+echo "Sending briefing to Orchestrator..."
 
-# 5. Send briefings (wait for agents to initialize)
-echo ""
-echo "Waiting for agents to initialize..."
-sleep 5
-
-# Build executor list for orchestrator briefing
-EXECUTOR_LIST=""
-for i in $(seq 1 "$EXECUTORS"); do
-    EXECUTOR_LIST="$EXECUTOR_LIST- Window 'Exec-$i': Executor $i\n"
-done
-
-# Brief Orchestrator
 ORCH_BRIEFING="You are the AI Orchestrator for the '$PROJECT_NAME' project.
 
-Your responsibilities:
-1. Monitor team status every 5 minutes using: torc status $TEAM_NAME
-2. Coordinate with the Project Leader (PL) for task assignment
-3. Track executor progress via git worktrees
-4. Identify blockers and facilitate communication
+=== YOUR ROLE ===
+You are the COMMANDER. You dynamically create and manage the entire team.
 
-Team layout (tmux session: $SESSION):
-- Window 'Orchestrator': You (AI Orchestrator)
-- Window 'PL': Project Leader
-$EXECUTOR_LIST
+=== B ARCHITECTURE DYNAMIC CREATION ===
+Phase 1: Bootstrap (YOU DO THIS NOW)
+1. Create PL window: tmux new-window -t $SESSION -n 'PL' -c '$PROJECT_PATH'
+2. Start PL agent: torc start-agent $SESSION:PL project_leader
+3. Brief PL on the project
+4. Ask PL: 'What is the plan? How many executors do you need?'
 
-Useful commands:
-  torc status $TEAM_NAME
-  torc send $SESSION:PL 'Status update?'
-  git -C $PROJECT_PATH/.worktrees/executor-N log --oneline -5
+Phase 2: Team Building (AFTER PL RESPONDS)
+When PL tells you they need N executors:
+1. Create worktrees: torc worktree create $PROJECT_PATH executor-1, executor-2, etc.
+2. Create windows: tmux new-window -t $SESSION -n 'Exec-N' -c 'worktree-path'
+3. Start executor agents: torc start-agent $SESSION:Exec-N executor
+4. Brief each executor with their specific task
+5. Update team state file
 
-Start by asking PL: 'What's the plan for this project?'"
+Phase 3: Monitoring
+- Check status: torc status $TEAM_NAME
+- Coordinate via PL (not directly with executors)
+- Scale up if PL requests more executors
 
-tmux_send "$SESSION:Orchestrator" "$ORCH_BRIEFING"
-sleep 2
+=== PROJECT INFO ===
+Project: $PROJECT_NAME
+Path: $PROJECT_PATH
+Session: $SESSION
+Spec file: ${SPEC_FILE:-'(none provided)'}
 
-# Brief PL
-PL_BRIEFING="You are the Project Leader for the '$PROJECT_NAME' project.
+=== AVAILABLE COMMANDS ===
+tmux new-window -t $SESSION -n 'WindowName' -c '$PROJECT_PATH'
+torc start-agent $SESSION:WindowName role
+torc worktree create $PROJECT_PATH executor-id
+torc status $TEAM_NAME
+torc send $SESSION:WindowName 'message'
+tmux list-windows -t $SESSION
 
-Your responsibilities:
-1. Monitor executor progress by checking their worktree branches
-2. Review executor commits and provide feedback
-3. Ensure work aligns with the spec/requirements
-4. Report status to the orchestrator when asked
-5. Feed errors and issues back to executors
+=== START NOW ===
+1. Create the PL window and start PL agent
+2. Brief PL on this project
+3. Ask for their plan and executor requirements"
 
-Team layout (tmux session: $SESSION):
-- Window 'PL': You (Project Leader)$(for i in $(seq 1 "$EXECUTORS"); do echo "
-- Window 'Exec-$i': Executor $i (worktree branch: executor-$i-$(date +%Y%m%d))"; done)
-
-To check executor progress:
-  git -C $PROJECT_PATH/.worktrees/executor-N log --oneline -5
-
-To check executor git status:
-  git -C $PROJECT_PATH/.worktrees/executor-N status"
-
-if [ -n "$SPEC_FILE" ] && [ -f "$SPEC_FILE" ]; then
-    PL_BRIEFING="$PL_BRIEFING
-
-Spec file: $SPEC_FILE
-Please read the spec file to understand the requirements."
-fi
-
-tmux_send "$SESSION:PL" "$PL_BRIEFING"
-
-# Brief executors
-for i in $(seq 1 "$EXECUTORS"); do
-    EXEC_BRIEFING="You are Executor $i working on the '$PROJECT_NAME' project.
-
-You are working in a git worktree with your own branch. Commit your work regularly.
-
-Key rules:
-1. Work only in this directory (your worktree)
-2. Commit frequently with descriptive messages
-3. Do NOT push to main - your branch will be reviewed and merged by the team lead
-4. If you need guidance, the Project Leader is in window 'PL'
-
-Your branch: executor-$i-$(date +%Y%m%d)
-Project: $PROJECT_PATH"
-
-    if [ -n "$SPEC_FILE" ] && [ -f "$SPEC_FILE" ]; then
-        EXEC_BRIEFING="$EXEC_BRIEFING
-
-Spec file: $SPEC_FILE
-Please read the spec file to understand what to implement."
-    fi
-
-    tmux_send "$SESSION:Exec-$i" "$EXEC_BRIEFING"
+# Send briefing line by line to avoid issues
+echo "$ORCH_BRIEFING" | while IFS= read -r line; do
+    tmux_send "$SESSION:Orchestrator" "$line"
+    sleep 0.1
 done
 
 echo ""
-echo "=== Team Deployed ==="
+echo "=== Orchestrator Deployed ==="
 echo "Session: $SESSION"
 echo "Windows:"
 tmux_list_windows "$SESSION"
 echo ""
 echo "State: $(team_state_file "$TEAM_NAME")"
 echo ""
+echo "Orchestrator is now bootstrapping the team..."
 echo "Next steps:"
-echo "  torc status $TEAM_NAME                    # Check team status"
-echo "  torc send $SESSION:Orchestrator 'msg'    # Message the orchestrator"
-echo "  torc send $SESSION:PL 'msg'              # Message the project leader"
-echo "  torc review $TEAM_NAME                    # Review executor work"
-echo "  torc teardown $TEAM_NAME                  # Shut down when done"
+echo "  1. Orchestrator creates PL"
+echo "  2. PL plans and requests executors"
+echo "  3. Orchestrator creates executors"
 echo ""
-echo "The Orchestrator agent is monitoring the team automatically."
-echo "Attach to watch: tmux attach -t $SESSION"
+echo "Monitor progress:"
+echo "  torc status $TEAM_NAME"
+echo "  torc send $SESSION:Orchestrator 'Status?'"
+echo "  tmux attach -t $SESSION"
