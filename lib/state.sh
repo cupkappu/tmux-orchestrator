@@ -70,3 +70,49 @@ remove_team_state() {
     file="$(team_state_file "$1")"
     [ -f "$file" ] && rm "$file"
 }
+
+# Update task progress in team state
+# Usage: update_task_progress <team-name> <field> <value>
+update_task_progress() {
+    local team="$1"
+    local field="$2"
+    local value="$3"
+    local file
+    file="$(team_state_file "$team")"
+
+    [ -f "$file" ] && python3 -c "
+import json
+with open('$file') as f:
+    data = json.load(f)
+if 'progress' not in data:
+    data['progress'] = {}
+data['progress']['$field'] = '$value'
+with open('$file', 'w') as f:
+    json.dump(data, f, indent=2)
+" 2>/dev/null
+}
+
+# Check if all tasks are complete
+# Usage: all_tasks_complete <team-name>
+all_tasks_complete() {
+    local team="$1"
+    local file
+    file="$(team_state_file "$team")"
+
+    [ -f "$file" ] && python3 -c "
+import json, sys
+with open('$file') as f:
+    data = json.load(f)
+prog = data.get('progress', {})
+# Check if all executors are merged back
+needed = int(prog.get('executors_needed', 0))
+created = len(data.get('agents', {})) - 2  # -orch -pl
+merged = int(prog.get('executors_merged', 0))
+# PL merged to main?
+pl_merged = prog.get('pl_merged', 'false')
+if needed > 0 and created >= needed and merged >= needed and pl_merged == 'true':
+    print('true')
+else:
+    print('false')
+" 2>/dev/null
+}
