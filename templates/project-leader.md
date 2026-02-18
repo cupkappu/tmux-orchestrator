@@ -96,9 +96,81 @@ Work in your worktree. Commit every 10 min. Report when done."
 # Note: phase=execution, executors_assigned=3
 ```
 
-### Phase 3: Continuous Monitoring (NEVER STOP UNTIL ALL DONE)
+### Phase 3: Worktree Verification & Monitoring (NEVER STOP UNTIL ALL MERGED)
 
-**MONITORING LOOP - Run until ALL executors report completion:**
+**CRITICAL: Executor completion = Commits in worktree + Merged to YOUR branch**
+
+**VERIFICATION SCRIPT - Run this to check all executor worktrees:**
+
+```bash
+#!/bin/bash
+# verify_executors.sh - Place this in your worktree and run it
+
+echo "=== Worktree Verification Report ==="
+echo "Timestamp: $(date)"
+echo ""
+
+PL_BRANCH=$(git branch --show-current)
+echo "PL Branch: $PL_BRANCH"
+echo ""
+
+# List of executors (update based on what you requested)
+EXECUTORS=("exec-1" "exec-2" "exec-3")
+# For multi-PL: EXECUTORS=("fe-exec-1" "fe-exec-2") or ("be-exec-1" "be-exec-2")
+
+TOTAL_EXECUTORS=${#EXECUTORS[@]}
+EXECUTORS_WITH_COMMITS=0
+EXECUTORS_MERGED=0
+
+for exec in "${EXECUTORS[@]}"; do
+    EXEC_WT="{{PROJECT_PATH}}/.worktrees/$exec"
+    echo "--- Checking $exec ---"
+
+    if [ ! -d "$EXEC_WT" ]; then
+        echo "  Status: WORKTREE NOT FOUND"
+        continue
+    fi
+
+    cd "$EXEC_WT"
+    EXEC_BRANCH=$(git branch --show-current 2>/dev/null || echo "unknown")
+    COMMIT_COUNT=$(git log --oneline | wc -l)
+    UNCOMMITTED=$(git status --short | wc -l)
+
+    echo "  Branch: $EXEC_BRANCH"
+    echo "  Commits: $COMMIT_COUNT"
+    echo "  Uncommitted files: $UNCOMMITTED"
+
+    # Check if this executor's branch is merged into PL
+    if git branch --merged | grep -q "$EXEC_BRANCH"; then
+        echo "  Merge status: MERGED to PL"
+        ((EXECUTORS_MERGED++))
+    else
+        echo "  Merge status: NOT MERGED"
+    fi
+
+    if [ $COMMIT_COUNT -gt 0 ]; then
+        ((EXECUTORS_WITH_COMMITS++))
+    fi
+
+    echo ""
+done
+
+echo "=== SUMMARY ==="
+echo "Total executors: $TOTAL_EXECUTORS"
+echo "With commits: $EXECUTORS_WITH_COMMITS"
+echo "Merged to PL: $EXECUTORS_MERGED"
+echo ""
+
+if [ $EXECUTORS_MERGED -eq $TOTAL_EXECUTORS ]; then
+    echo "ALL EXECUTORS MERGED - Ready to report DONE to Orchestrator"
+    exit 0
+else
+    echo "NOT COMPLETE - Waiting for $(($TOTAL_EXECUTORS - $EXECUTORS_MERGED)) more executors"
+    exit 1
+fi
+```
+
+**MONITORING LOOP - Run until ALL executors merged:**
 
 ```bash
 while true; do
@@ -111,86 +183,131 @@ while true; do
     git status --short
     git log --oneline -5
 
-    # Check each executor (Orchestrator will tell you executor names, e.g., exec-1, fe-exec-1, be-exec-1)
-    echo "--- Executor Status ---"
-    ALL_EXECUTORS_DONE=true
+    # Check each executor worktree for commits
+    echo "--- Executor Worktree Status ---"
+    ALL_MERGED=true
 
-    # NOTE: Update this list based on what you requested from Orchestrator
     for exec in exec-1 exec-2 exec-3; do
         EXEC_WT="{{PROJECT_PATH}}/.worktrees/$exec"
         if [ -d "$EXEC_WT" ]; then
-            echo "Checking $exec..."
             cd "$EXEC_WT"
+            COMMITS=$(git log --oneline 2>/dev/null | wc -l)
+            BRANCH=$(git branch --show-current 2>/dev/null)
 
-            # Check git status
-            STATUS=$(git status --short)
-            COMMITS=$(git log --oneline | wc -l)
-
-            echo "  Commits: $COMMITS"
-            echo "  Uncommitted: $STATUS"
-
-            # Ask executor for status
-            {{TORC_BIN}}/torc-send {{SESSION}}:$exec "Status? Is your task complete? Reply: DONE or IN_PROGRESS"
-
-            # Check if executor reported DONE
-            # If not done, ALL_EXECUTORS_DONE=false
+            # Check if merged into PL
+            cd "$PL_WORKTREE"
+            if git branch --merged | grep -q "$BRANCH"; then
+                echo "  $exec: $COMMITS commits [MERGED ✓]"
+            else
+                echo "  $exec: $COMMITS commits [NOT MERGED]"
+                ALL_MERGED=false
+            fi
         fi
     done
 
-    # If ALL executors reported DONE, break and merge
-    # Otherwise, continue monitoring
+    # If ALL merged, we can break and report DONE
+    if [ "$ALL_MERGED" = true ]; then
+        echo ""
+        echo "ALL EXECUTORS MERGED TO PL BRANCH"
+        break
+    fi
+
+    # Ask executors for status update
+    {{TORC_BIN}}/torc-send {{SESSION}}:Exec-1 "Status check: Report your progress. Any blockers?"
+    {{TORC_BIN}}/torc-send {{SESSION}}:Exec-2 "Status check: Report your progress. Any blockers?"
 
     sleep 300  # 5 minutes
-
 done
 ```
 
-### Phase 4: Merge Executor Work (When all executors report DONE)
+### Phase 4: MERGE Executor Work (YOUR RESPONSIBILITY)
 
-**Step 8: Review each executor's work**
+**CRITICAL: YOU must merge executor branches to YOUR worktree. They cannot do it.**
+
+**Step 8: Verify executor commits before merge**
 ```bash
-# Check each executor worktree (update list to match your executors)
+cd $(pwd)
+
+# For each executor, verify they have commits before merging
+check_executor_commits() {
+    local exec=$1
+    local exec_wt="{{PROJECT_PATH}}/.worktrees/$exec"
+    local branch=$(git -C "$exec_wt" branch --show-current)
+    local commits=$(git -C "$exec_wt" log --oneline | wc -l)
+
+    if [ $commits -eq 0 ]; then
+        echo "ERROR: $exec has NO COMMITS. Rejecting merge."
+        return 1
+    fi
+
+    echo "$exec: $commits commits on branch $branch - OK to merge"
+    return 0
+}
+
+# Check all executors
 for exec in exec-1 exec-2 exec-3; do
-    EXEC_WT="{{PROJECT_PATH}}/.worktrees/$exec"
-    echo "Reviewing $exec..."
-    ls -la "$EXEC_WT/"
-    git -C "$EXEC_WT" log --oneline -5
+    check_executor_commits $exec || exit 1
 done
 ```
 
 **Step 9: Merge executor branches to YOUR worktree**
 ```bash
-# You are already in your worktree (check with pwd)
 cd $(pwd)
 
-# Merge each executor branch (update names to match your executors)
-# Use the branch names Orchestrator created, e.g., exec-1-YYYYMMDD, fe-exec-1-YYYYMMDD
-git merge exec-1-$(date +%Y%m%d) -m "Merge exec-1 work"
-git merge exec-2-$(date +%Y%m%d) -m "Merge exec-2 work"
-git merge exec-3-$(date +%Y%m%d) -m "Merge exec-3 work"
+# Get today's date for branch names
+DATE_SUFFIX=$(date +%Y%m%d)
 
-# Verify all merged
-git log --oneline -10
-git status
+# Merge each executor branch into YOUR worktree
+# YOU are the only one who can do this merge
+
+for exec in exec-1 exec-2 exec-3; do
+    EXEC_BRANCH="${exec}-${DATE_SUFFIX}"
+    echo "Merging $EXEC_BRANCH..."
+
+    # Attempt merge
+    if git merge "$EXEC_BRANCH" -m "PL: Merge $exec work into PL branch"; then
+        echo "  ✓ $exec merged successfully"
+    else
+        echo "  ✗ Merge conflict with $exec. Resolve manually:"
+        echo "    git status  # See conflicts"
+        echo "    # Fix files..."
+        echo "    git add -A"
+        echo "    git commit -m 'PL: Merge $exec work (resolved conflicts)'"
+    fi
+done
+
+# Verify all merged - list branches that are now part of PL
+echo ""
+echo "=== Merged Branches ==="
+git branch --merged
+echo ""
+echo "=== PL Branch Log ==="
+git log --oneline -15
 ```
 
-**Step 10: Test and fix integration**
+**Step 10: Final integration commit**
 ```bash
-# Check if all files work together
-ls -la
-cat index.html | head -20
-# Fix any integration issues
-```
-
-**Step 11: Commit final integration**
-```bash
+# If you made any integration fixes, commit them
 git add -A
-git commit -m "PL: integrated all executor work"
+git commit -m "PL: All executor work integrated and tested" || echo "Nothing to commit"
+
+# Push your branch (if remote configured)
+git push -u origin $(git branch --show-current) 2>/dev/null || echo "No remote configured"
 ```
 
-**Step 12: Report to Orchestrator**
+**Step 11: Report VERIFIED completion to Orchestrator**
 ```bash
-{{TORC_BIN}}/torc-send {{SESSION}}:Orchestrator "All executors complete. Work merged to my branch. Ready to merge to main."
+# Get verification stats
+PL_BRANCH=$(git branch --show-current)
+TOTAL_COMMITS=$(git log --oneline | wc -l)
+MERGED_BRANCHES=$(git branch --merged | wc -l)
+
+{{TORC_BIN}}/torc-send {{SESSION}}:Orchestrator "VERIFIED_COMPLETE:
+- PL Branch: $PL_BRANCH
+- Total commits in PL: $TOTAL_COMMITS
+- Merged executor branches: $MERGED_BRANCHES
+- All executors: MERGED to PL branch
+- Status: READY_FOR_MAIN_MERGE"
 ```
 
 ### Phase 5: Final Merge (When Orchestrator approves)

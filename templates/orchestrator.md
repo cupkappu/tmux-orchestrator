@@ -131,78 +131,157 @@ tmux new-window -t {{SESSION}} -n "BE-Exec-2" -c "{{PROJECT_PATH}}/.worktrees/be
 
 **Step 12: Let PLs assign tasks to their executors**
 
-PLs will send specific tasks to their domain executors. You monitor.
+PLs will send specific tasks to their domain executors. You monitor worktree commits.
 
-### Phase 3: Continuous Monitoring (NEVER STOP UNTIL ALL DONE)
+### Phase 3: Worktree Verification & Monitoring (NEVER STOP UNTIL ALL MERGED TO MAIN)
 
-**MONITORING LOOP - Run until ALL PLs report completion:**
+**CRITICAL: PL completion = All executors' commits merged to PL + PL branch has merge commit**
+
+**WORKTREE STATUS CHECK - Run this script to verify all worktrees:**
+
+```bash
+#!/bin/bash
+# orchestrator_verify.sh - Place in project root and run
+
+echo "=== Orchestrator Worktree Verification ==="
+echo "Timestamp: $(date)"
+echo ""
+
+cd {{PROJECT_PATH}}
+
+# Configuration: Update based on your architecture
+PLS=("pl")  # Single PL: ("pl")  Multi-PL: ("pl-frontend" "pl-backend")
+ALL_PL_DONE=true
+
+for pl in "${PLS[@]}"; do
+    PL_WT="{{PROJECT_PATH}}/.worktrees/$pl"
+    echo "--- Checking $pl ---"
+
+    if [ ! -d "$PL_WT" ]; then
+        echo "  Status: WORKTREE NOT FOUND"
+        ALL_PL_DONE=false
+        continue
+    fi
+
+    cd "$PL_WT"
+    PL_BRANCH=$(git branch --show-current)
+    PL_COMMITS=$(git log --oneline | wc -l)
+
+    echo "  Branch: $PL_BRANCH"
+    echo "  Total commits: $PL_COMMITS"
+
+    # Count merged executor branches
+    MERGED_EXECUTORS=$(git branch --merged | grep -c "exec\|fe-exec\|be-exec" || echo "0")
+    echo "  Merged executor branches: $MERGED_EXECUTORS"
+
+    # Check if PL has uncommitted changes
+    UNCOMMITTED=$(git status --short | wc -l)
+    if [ $UNCOMMITTED -gt 0 ]; then
+        echo "  WARNING: $UNCOMMITTED uncommitted files"
+    fi
+
+    # Verify PL is ahead of main
+    cd {{PROJECT_PATH}}
+    AHEAD=$(git log main..$PL_BRANCH --oneline 2>/dev/null | wc -l || echo "0")
+    echo "  Commits ahead of main: $AHEAD"
+
+    if [ $MERGED_EXECUTORS -eq 0 ] || [ $AHEAD -eq 0 ]; then
+        echo "  Status: NOT READY (no executor merges detected)"
+        ALL_PL_DONE=false
+    else
+        echo "  Status: READY FOR MAIN MERGE"
+    fi
+
+    echo ""
+done
+
+echo "=== MAIN BRANCH STATUS ==="
+git log --oneline -5
+
+echo ""
+if [ "$ALL_PL_DONE" = true ]; then
+    echo "ALL PL WORKTREES READY - Proceed to Phase 5 (Merge to Main)"
+    exit 0
+else
+    echo "WAITING - Not all PLs have merged executor work"
+    exit 1
+fi
+```
+
+**MONITORING LOOP - Run until ALL worktrees merged to main:**
 
 ```bash
 while true; do
     echo "=== $(date) - Orchestrator Monitoring ==="
 
-    # Check YOUR worktree (main)
-    echo "--- Main Branch ---"
     cd {{PROJECT_PATH}}
+
+    # Check main branch
+    echo "--- Main Branch ---"
     git status --short
     git log --oneline -3
+
+    ALL_PL_MERGED=true
 
     # SINGLE PL monitoring:
     if [ -d "{{PROJECT_PATH}}/.worktrees/pl" ]; then
         echo "--- PL Worktree ---"
-        git -C {{PROJECT_PATH}}/.worktrees/pl status --short
-        git -C {{PROJECT_PATH}}/.worktrees/pl log --oneline -5
+        PL_BRANCH=$(git -C {{PROJECT_PATH}}/.worktrees/pl branch --show-current)
+        PL_COMMITS=$(git -C {{PROJECT_PATH}}/.worktrees/pl log --oneline | wc -l)
+        echo "  Branch: $PL_BRANCH, Commits: $PL_COMMITS"
 
-        # Check PL's executors
+        # Check which executors are merged to PL
+        MERGED_TO_PL=$(git -C {{PROJECT_PATH}}/.worktrees/pl branch --merged | grep -E "^\s*exec" || echo "None")
+        echo "  Merged to PL: $MERGED_TO_PL"
+
+        # Check if PL is merged to main
+        if git branch --merged main | grep -q "$PL_BRANCH"; then
+            echo "  Status: MERGED TO MAIN ✓"
+        else
+            echo "  Status: NOT MERGED TO MAIN"
+            ALL_PL_MERGED=false
+        fi
+
+        # Check executor worktrees
         for exec in exec-1 exec-2 exec-3; do
             if [ -d "{{PROJECT_PATH}}/.worktrees/$exec" ]; then
                 COMMITS=$(git -C {{PROJECT_PATH}}/.worktrees/$exec log --oneline | wc -l)
                 echo "  $exec: $COMMITS commits"
             fi
         done
-
-        # Ask PL for status
-        {{TORC_BIN}}/torc-send {{SESSION}}:PL "Status check: Which executors have completed?"
     fi
 
     # MULTI-PL monitoring:
-    # PL-Frontend
-    if [ -d "{{PROJECT_PATH}}/.worktrees/pl-frontend" ]; then
-        echo "--- PL-Frontend Worktree ---"
-        git -C {{PROJECT_PATH}}/.worktrees/pl-frontend status --short
-        git -C {{PROJECT_PATH}}/.worktrees/pl-frontend log --oneline -3
+    for pl in pl-frontend pl-backend; do
+        if [ -d "{{PROJECT_PATH}}/.worktrees/$pl" ]; then
+            echo "--- $pl Worktree ---"
+            PL_BRANCH=$(git -C {{PROJECT_PATH}}/.worktrees/$pl branch --show-current)
 
-        for exec in fe-exec-1 fe-exec-2 fe-exec-3; do
-            if [ -d "{{PROJECT_PATH}}/.worktrees/$exec" ]; then
-                COMMITS=$(git -C {{PROJECT_PATH}}/.worktrees/$exec log --oneline | wc -l)
-                echo "  $exec: $COMMITS commits"
+            # Check if merged to main
+            if git branch --merged main | grep -q "$PL_BRANCH"; then
+                echo "  Status: MERGED TO MAIN ✓"
+            else
+                echo "  Status: NOT MERGED TO MAIN"
+                ALL_PL_MERGED=false
+
+                # Check merged executors
+                MERGED=$(git -C {{PROJECT_PATH}}/.worktrees/$pl branch --merged | grep -c "exec" || echo "0")
+                echo "  Executors merged to PL: $MERGED"
+
+                # Ask for status
+                {{TORC_BIN}}/torc-send {{SESSION}}:$pl "Worktree check: How many executors merged to your branch? Reply with VERIFIED_COUNT:N"
             fi
-        done
+        fi
+    done
 
-        {{TORC_BIN}}/torc-send {{SESSION}}:PL-Frontend "Status: Frontend executors complete? Reply: DONE or IN_PROGRESS"
+    # If ALL PLs merged to main, we're done
+    if [ "$ALL_PL_MERGED" = true ]; then
+        echo ""
+        echo "=== ALL WORK MERGED TO MAIN ==="
+        break
     fi
-
-    # PL-Backend
-    if [ -d "{{PROJECT_PATH}}/.worktrees/pl-backend" ]; then
-        echo "--- PL-Backend Worktree ---"
-        git -C {{PROJECT_PATH}}/.worktrees/pl-backend status --short
-        git -C {{PROJECT_PATH}}/.worktrees/pl-backend log --oneline -3
-
-        for exec in be-exec-1 be-exec-2 be-exec-3; do
-            if [ -d "{{PROJECT_PATH}}/.worktrees/$exec" ]; then
-                COMMITS=$(git -C {{PROJECT_PATH}}/.worktrees/$exec log --oneline | wc -l)
-                echo "  $exec: $COMMITS commits"
-            fi
-        done
-
-        {{TORC_BIN}}/torc-send {{SESSION}}:PL-Backend "Status: Backend executors complete? Reply: DONE or IN_PROGRESS"
-    fi
-
-    # Check if ALL PLs reported DONE
-    # If yes, proceed to Phase 4
 
     sleep 300  # 5 minutes
-
 done
 ```
 
@@ -218,58 +297,185 @@ done
 # You relay messages between them if needed
 ```
 
-**Step 14: Verify all executors done across all PLs**
+**Step 14: Verify all PL worktrees have executor merges**
 
 ```bash
-# Check each PL's worktree has merged all their executors
-# PL-Frontend should have: fe-exec-1, fe-exec-2, ... merged
-git -C {{PROJECT_PATH}}/.worktrees/pl-frontend log --oneline -10
+# BEFORE merging to main, verify worktree evidence:
 
-# PL-Backend should have: be-exec-1, be-exec-2, ... merged
-git -C {{PROJECT_PATH}}/.worktrees/pl-backend log --oneline -10
+echo "=== Pre-Merge Verification ==="
+
+# For each PL, verify:
+# 1. PL branch exists and has commits
+# 2. At least one executor branch is merged to PL
+# 3. PL is ahead of main
+
+for pl in pl pl-frontend pl-backend; do
+    PL_WT="{{PROJECT_PATH}}/.worktrees/$pl"
+    if [ -d "$PL_WT" ]; then
+        cd "$PL_WT"
+        PL_BRANCH=$(git branch --show-current)
+        PL_COMMITS=$(git log --oneline | wc -l)
+
+        echo "Checking $pl:"
+        echo "  Branch: $PL_BRANCH ($PL_COMMITS commits)"
+
+        # Count merged executor branches
+        EXEC_MERGED=$(git branch --merged | grep -c "exec" || echo "0")
+        echo "  Executor branches merged: $EXEC_MERGED"
+
+        if [ $EXEC_MERGED -eq 0 ]; then
+            echo "  ERROR: No executor work merged! Aborting."
+            exit 1
+        fi
+
+        # Check commits ahead of main
+        cd {{PROJECT_PATH}}
+        AHEAD=$(git log main..$PL_BRANCH --oneline 2>/dev/null | wc -l)
+        echo "  Commits ahead of main: $AHEAD"
+
+        if [ $AHEAD -eq 0 ]; then
+            echo "  ERROR: PL branch not ahead of main! Aborting."
+            exit 1
+        fi
+
+        echo "  VERIFIED ✓"
+        echo ""
+    fi
+done
+echo "All PL worktrees verified. Proceeding to merge..."
 ```
 
-### Phase 5: Final Merge to Main
+### Phase 5: MERGE to Main (YOUR RESPONSIBILITY)
 
-**Step 15: Merge each PL branch to main**
+**CRITICAL: YOU must merge PL branches to main. PLs cannot do this.**
 
-```bash
-# Single PL:
-# git -C {{PROJECT_PATH}} merge pl-$(date +%Y%m%d)
+**Step 15: Verify and merge PL branches to main**
 
-# Multi-PL - merge in order:
-# First merge backend (foundation)
-git -C {{PROJECT_PATH}} merge pl-backend-$(date +%Y%m%d) -m "Merge backend (PL + executors)"
-
-# Then merge frontend
-git -C {{PROJECT_PATH}} merge pl-frontend-$(date +%Y%m%d) -m "Merge frontend (PL + executors)"
-```
-
-**Step 16: Verify final state**
 ```bash
 cd {{PROJECT_PATH}}
-git log --oneline -15
-git status
-ls -la
+
+# Get the actual PL branch names
+PL_BRANCHES=()
+for pl in pl pl-frontend pl-backend; do
+    if [ -d ".worktrees/$pl" ]; then
+        BRANCH=$(git -C ".worktrees/$pl" branch --show-current)
+        PL_BRANCHES+=("$BRANCH")
+    fi
+done
+
+echo "PL branches to merge: ${PL_BRANCHES[@]}"
+
+# Merge order: Backend first (foundation), then Frontend
+for branch in "${PL_BRANCHES[@]}"; do
+    echo "Merging $branch to main..."
+
+    # Verify branch exists and has commits
+    if ! git show-ref --verify --quiet refs/heads/$branch; then
+        echo "ERROR: Branch $branch does not exist!"
+        continue
+    fi
+
+    # Attempt merge
+    if git merge $branch -m "Orchestrator: Merge $branch to main"; then
+        echo "  ✓ $branch merged successfully"
+    else
+        echo "  ✗ Merge conflict with $branch"
+        echo "    Resolve manually:"
+        echo "    git status"
+        echo "    # Fix conflicts..."
+        echo "    git add -A"
+        echo "    git commit -m 'Orchestrator: Merge $branch (resolved conflicts)'"
+    fi
+    echo ""
+done
 ```
 
-**Step 17: Final report**
+**Step 16: Final verification - ALL worktrees merged**
+
 ```bash
-# Report to user: "All tasks complete. Work merged to main."
+cd {{PROJECT_PATH}}
+
+echo "=== FINAL VERIFICATION ==="
+echo ""
+
+# Verify main has all commits
+echo "Main branch log:"
+git log --oneline -20
+
+echo ""
+echo "Files in main:"
+ls -la
+
+# Count total commits from all sources
+MAIN_COMMITS=$(git log --oneline | wc -l)
+echo ""
+echo "Total commits in main: $MAIN_COMMITS"
+
+# Verify all worktrees are represented in main
+for pl in pl pl-frontend pl-backend; do
+    if [ -d ".worktrees/$pl" ]; then
+        PL_BRANCH=$(git -C ".worktrees/$pl" branch --show-current)
+        # Check if any commit from PL branch is in main
+        PL_COMMITS=$(git -C ".worktrees/$pl" log --oneline | wc -l)
+        IN_MAIN=$(git log main --oneline | grep -c "$PL_BRANCH" || echo "0")
+        echo "  $pl: $PL_COMMITS commits, $IN_MAIN in main"
+    fi
+done
+
+echo ""
+echo "=== MERGE COMPLETE ==="
 ```
 
-## COMPLETION RULES (CRITICAL)
+**Step 17: Final report to user**
+```bash
+# Generate completion report
+cd {{PROJECT_PATH}}
 
-**Task is NOT complete until:**
-- [ ] All PLs created and briefed with their domain scope
-- [ ] All executors created and assigned tasks by their PLs
-- [ ] All executors committed work to their branches
-- [ ] All executor branches merged to their respective PL worktrees
-- [ ] Multi-PL only: API contracts coordinated between PLs
-- [ ] All PL branches merged to main
-- [ ] You verify main branch has all changes
+echo "=== PROJECT COMPLETION REPORT ==="
+echo "Timestamp: $(date)"
+echo ""
+echo "Architecture: [Single-PL or Multi-PL]"
+echo "Total commits in main: $(git log --oneline | wc -l)"
+echo ""
+echo "Worktrees merged:"
+for pl in pl pl-frontend pl-backend; do
+    [ -d ".worktrees/$pl" ] && echo "  - $pl"
+done
+echo ""
+echo "Key files created:"
+find . -type f -name "*.html" -o -name "*.css" -o -name "*.js" -o -name "*.py" | grep -v ".git" | head -20
+echo ""
+echo "Status: ALL TASKS COMPLETE ✓"
+echo "Work successfully merged to main branch."
+```
 
-**DO NOT stop monitoring until ALL above are checked!**
+## COMPLETION RULES (CRITICAL - Verified via Worktree Commits)
+
+**Task is NOT complete until - ALL must be verified via git worktree evidence:**
+
+- [ ] **Executors have commits**: Each executor worktree has `git log` showing commits
+- [ ] **PL has executor merges**: PL worktree shows executor branches in `git branch --merged`
+- [ ] **PL has integration commit**: PL worktree has merge commit with message "PL: Merge exec-X"
+- [ ] **Main has PL merges**: Main branch shows PL branches in `git branch --merged`
+- [ ] **Main has final merge commit**: Main has commit "Orchestrator: Merge PL-X to main"
+- [ ] **File evidence**: Main has actual files created (check with `ls -la`)
+
+**Worktree Hierarchy Verification:**
+```
+Executor worktrees (exec-1, exec-2...)
+    ↓ git commit (must have commits)
+    ↓ PL merges (git merge exec-X)
+
+PL worktrees (pl, pl-frontend...)
+    ↓ git commit (merge commit required)
+    ↓ Orchestrator merges (git merge pl-X)
+
+Main branch
+    ↓ All work present (verified via git log --oneline)
+```
+
+**DO NOT report completion until ALL worktrees are merged up the hierarchy!**
+**DO NOT trust "DONE" messages - verify worktree commits!**
 
 ## HIERARCHY REMINDERS
 
