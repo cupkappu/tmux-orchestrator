@@ -81,7 +81,7 @@ while true; do
     torc send {{SESSION}}:Exec-2 "Status? What's done, what's next?"
     # Add more executors as needed
 
-    sleep 240  # 4 minutes
+    sleep 120  # 2 minutes - EXPLICITLY SET to save tokens
 
     # Check if ALL done
     # If all executors report complete, break and tell Orchestrator

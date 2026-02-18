@@ -68,7 +68,7 @@ while true; do
     # Check for commits
     git -C {{PROJECT_PATH}} branch -a
 
-    sleep 180  # 3 minutes
+    sleep 120  # 2 minutes - EXPLICITLY SET to save tokens
 done
 ```
 
