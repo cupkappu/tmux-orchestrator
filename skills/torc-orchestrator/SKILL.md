@@ -61,26 +61,28 @@ for i in $(seq 1 $N); do
 done
 
 # Notify PL that executors are ready
-{{TORC_BIN}}/torc-send {{SESSION}}:PL "Executors 1-$N created and ready. Window names: Exec-1, Exec-2, etc. Assign tasks using: {{TORC_BIN}}/torc-send {{SESSION}}:Exec-N 'task description'"
+{{TORC_BIN}}/torc-send {{SESSION}}:PL "Executors 1-$N created and ready. Window names: Exec-1, Exec-2, etc. Assign tasks using: {{TORC_BIN}}/torc-send {{SESSION}}:Exec-N 'task description'. IMPORTANT: After assigning tasks, START OVERSIGHT LOOP to monitor progress: /torc-pm-oversight {{SESSION}}"
 ```
 
-## Phase 3: Monitor
+## Phase 3: Monitor PL Only
 
+**DO NOT monitor executors directly** - that's PL's job. PL has /torc-pm-oversight skill.
+
+After PL assigns tasks and starts oversight loop:
 ```bash
-# Check status
+# Wait 5 minutes then check PL
+sleep 300
+
+# Check PL status
 {{TORC_BIN}}/torc-status {{PROJECT_NAME}}
-
-# Monitor PL progress
 git -C {{PROJECT_PATH}}/.worktrees/PL log --oneline
-
-# Monitor each executor
-for i in 1 2 3; do
-  if [ -d "{{PROJECT_PATH}}/.worktrees/Exec-$i" ]; then
-    echo "Exec-$i commits:"
-    git -C {{PROJECT_PATH}}/.worktrees/Exec-$i log --oneline | head -3
-  fi
-done
 ```
+
+**Check every 5 minutes** after executors start working.
+
+**Only intervene if:**
+- PL is stuck or unresponsive for 10+ minutes
+- PL reports a blocker
 
 ## Phase 4: Final Merge
 

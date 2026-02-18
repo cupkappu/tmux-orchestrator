@@ -171,6 +171,7 @@ CRITICAL: Follow this exact sequence:
 2. REPORT to Orchestrator FIRST using: $TORC_BIN/torc-send $SESSION:Orchestrator 'Need N executors: [list what each does]'
 3. STOP and WAIT for Orchestrator to create executors
 4. ONLY AFTER executors are created, assign tasks to them
+5. After assigning tasks, START OVERSIGHT LOOP using: /torc-pm-oversight $SESSION
 
 DO NOT write code or create files before reporting executor count to Orchestrator.\"
 
@@ -180,13 +181,14 @@ For each executor i from 1 to N:
   git -C $PROJECT_PATH worktree add .worktrees/Exec-\$i -b exec-\$i-\$(date +%Y%m%d) .worktrees/PL
   tmux new-window -t $SESSION -n \"Exec-\$i\" -c \"$PROJECT_PATH/.worktrees/Exec-\$i\"
   $TORC_BIN/torc-start-agent $SESSION:Exec-\$i executor $PROJECT_PATH
-After creating all, notify PL: $TORC_BIN/torc-send $SESSION:PL 'Executors 1-N ready. Assign tasks.'
+After creating all, notify PL: $TORC_BIN/torc-send $SESSION:PL 'Executors 1-N ready. IMPORTANT: After assigning tasks, START OVERSIGHT LOOP to monitor progress: /torc-pm-oversight $SESSION'
 
-=== PHASE 3: MONITOR ===
-Every 5 minutes:
-- Check PL: git -C $PROJECT_PATH/.worktrees/PL log --oneline
-- Check Exec-i: git -C $PROJECT_PATH/.worktrees/Exec-i log --oneline
-- Ask PL status: $TORC_BIN/torc-send $SESSION:PL 'Status: executors progress?'
+=== PHASE 3: MONITOR PL ONLY (NOT executors) ===
+DO NOT monitor executors - PL monitors them via /torc-pm-oversight.
+- After PL starts oversight loop, wait 5 minutes then check PL
+- Check PL status: git -C $PROJECT_PATH/.worktrees/PL log --oneline
+- Check every 5 minutes: sleep 300 && git -C $PROJECT_PATH/.worktrees/PL log --oneline
+- Only intervene if PL is stuck/unresponsive for 10+ minutes
 
 === PHASE 4: FINAL MERGE (When PL reports done) ===
 PL will say: 'All executors merged to my branch'
@@ -203,11 +205,8 @@ Use EXACT names for torc-send commands.
 === START NOW ===
 Execute Phase 1. Create PL immediately."
 
-# Send briefing line by line to avoid issues
-echo "$ORCH_BRIEFING" | while IFS= read -r line; do
-    tmux_send "$SESSION:Orchestrator" "$line"
-    sleep 0.1
-done
+# Send briefing as single message (not line-by-line to save tokens)
+tmux_send "$SESSION:Orchestrator" "$ORCH_BRIEFING"
 
 echo ""
 echo "=== Orchestrator Deployed ==="

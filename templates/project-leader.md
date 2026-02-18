@@ -87,9 +87,9 @@ Orchestrator will:
 
 ## Phase 2: Assign and Monitor
 
-**Assign specific tasks**
+**Assign specific tasks to ALL executors at once**
 
-When executors are created, send clear tasks:
+When executors are ready, send ONE message with ALL tasks:
 
 ```bash
 /Users/kifuko/dev/Tmux-Orchestrator/bin/torc-send {{SESSION}}:Exec-1 "Task: Create Express server with:
@@ -103,6 +103,11 @@ Commit every 10 min. Report DONE with commit count."
 - Tailwind CSS configuration
 - Basic routing setup
 Commit every 10 min. Report DONE with commit count."
+
+# Alternative: Send to multiple executors at once
+for i in 1 2 3; do
+  /Users/kifuko/dev/Tmux-Orchestrator/bin/torc-send {{SESSION}}:Exec-$i "Task assigned. Check your worktree and start working. Commit every 10 min."
+done
 ```
 
 **Monitor via git worktrees**
@@ -116,6 +121,15 @@ git -C {{PROJECT_PATH}}/.worktrees/Exec-1 log --oneline
 # Check Exec-2
 git -C {{PROJECT_PATH}}/.worktrees/Exec-2 log --oneline
 ```
+
+**ALTERNATIVE: Use /torc-pm-oversight for continuous monitoring**
+
+Instead of manual checks, run the oversight skill:
+```bash
+/torc-pm-oversight {{SESSION}}
+```
+
+This will continuously monitor executors, check git progress, verify against spec, and report back.
 
 **Verify before merge**
 
