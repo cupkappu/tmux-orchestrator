@@ -62,35 +62,6 @@ except Exception:
     echo "${result:-$default_cli}"
 }
 
-# Get default executors count
-# Usage: get_default_executors [project-path]
-get_default_executors() {
-    local project_path="${1:-}"
-    local config_file="$ORCHESTRATOR_CONFIG"
-
-    # Check for project-level config
-    if [ -n "$project_path" ]; then
-        local project_config
-        project_config=$(find_project_config "$project_path")
-        [ -n "$project_config" ] && config_file="$project_config"
-    fi
-
-    if [ ! -f "$config_file" ]; then
-        echo "1"
-        return
-    fi
-
-    python3 -c "
-import json
-try:
-    with open('$config_file') as f:
-        config = json.load(f)
-    print(config.get('defaults', {}).get('executors', 1))
-except Exception:
-    print('1')
-" 2>/dev/null
-}
-
 # List all available CLI tools
 list_cli_tools() {
     if [ ! -f "$ORCHESTRATOR_CONFIG" ]; then

@@ -91,18 +91,13 @@ echo ""
 
 # B ARCHITECTURE with HIERARCHICAL WORKTREES:
 # 1. Orchestrator created in main project
-# 2. PL worktree created from main, PL works there
-# 3. Executor worktrees created from PL's worktree
-# Hierarchy: main -> PL-worktree -> Executor-worktrees
+# 2. PL worktree created from main by Orchestrator
+# 3. Executor worktrees created from PL's worktree by Orchestrator
+# Hierarchy: main -> Orchestrator -> PL -> Executors
 
 echo "Creating tmux session with Orchestrator..."
 tmux_create_session "$SESSION" "$PROJECT_PATH" "Orchestrator"
 sleep 0.5
-
-# Create PL worktree from main
-echo "Creating PL worktree..."
-PL_WORKTREE=$(worktree_create "$PROJECT_PATH" "pl")
-echo "  PL worktree: $PL_WORKTREE"
 
 # Get CLI for orchestrator
 ORCH_CLI=$(get_cli_command "orchestrator" "$PROJECT_PATH")
@@ -125,6 +120,7 @@ state = {
         }
     },
     'dynamic_creation': True,
+    'pls_created': [],
     'executors_needed': 0,
     'executors_created': []
 }
@@ -141,82 +137,63 @@ sleep 2
 # Send comprehensive briefing to Orchestrator
 echo "Sending briefing to Orchestrator..."
 
-USER_PLAN="${SPEC_FILE_CONTENT:-'Create a project showcase site. Plan and execute autonomously.'}"
+# Read spec content if file exists
+USER_PLAN="Create a project showcase site. Plan and execute autonomously."
+if [ -n "$SPEC_FILE" ] && [ -f "$SPEC_FILE" ]; then
+    USER_PLAN=$(cat "$SPEC_FILE")
+fi
 
 # Export TORC_BIN for templates to use
 export TORC_BIN
 
 ORCH_BRIEFING="=== ENVIRONMENT ===
-TORC_BIN: $TORC_BIN (Use this path for all torc commands)
+TORC_BIN: $TORC_BIN (Use this full path for ALL torc commands)
+SESSION: $SESSION
+PROJECT_PATH: $PROJECT_PATH
 
 === USER'S PLAN ===
 $USER_PLAN
 
 === YOUR MISSION ===
-Execute the above plan. Create team, monitor progress, ensure completion.
+You are Orchestrator. Create PL, let PL decide executor count, create executors, monitor until complete.
 
-=== PHASE 1: BOOTSTRAP (DO NOW) ===
-Step 1: Create PL worktree from main, then PL window
-git -C $PROJECT_PATH worktree add .worktrees/pl -b pl-\$(date +%Y%m%d)
-tmux new-window -t $SESSION -n 'PL' -c '$PROJECT_PATH/.worktrees/pl'
+=== PHASE 1: CREATE PL (DO NOW) ===
+Create ONE PL worktree and window, start PL agent:
 
-Step 2: Start PL agent
-$TORC_BIN/torc-start-agent \$SESSION:PL project_leader $PROJECT_PATH
+git -C $PROJECT_PATH worktree add .worktrees/PL -b pl-\$(date +%Y%m%d)
+tmux new-window -t $SESSION -n 'PL' -c '$PROJECT_PATH/.worktrees/PL'
+$TORC_BIN/torc-start-agent $SESSION:PL project_leader $PROJECT_PATH
+sleep 2
+$TORC_BIN/torc-send $SESSION:PL \"You are Project Leader. Mission: build multi-user todo app with auth, real-time collaboration, nice UI. Analyze complexity, decide how many executors needed (recommend 2-4). Report executor count to Orchestrator via: $TORC_BIN/torc-send $SESSION:Orchestrator 'Need N executors: [breakdown]'. Start planning now.\"
 
-Step 3: Send plan to PL (include the user's plan above)
-$TORC_BIN/torc-send \$SESSION:PL "Execute this plan: $USER_PLAN. Plan the work, break into tasks, tell me how many executors you need. Start immediately."
+=== PHASE 2: CREATE EXECUTORS (When PL reports N) ===
+PL will message you: 'Need N executors...'
+For each executor i from 1 to N:
+  git -C $PROJECT_PATH worktree add .worktrees/Exec-\$i -b exec-\$i-\$(date +%Y%m%d) .worktrees/PL
+  tmux new-window -t $SESSION -n \"Exec-\$i\" -c \"$PROJECT_PATH/.worktrees/Exec-\$i\"
+  $TORC_BIN/torc-start-agent $SESSION:Exec-\$i executor $PROJECT_PATH
+After creating all, notify PL: $TORC_BIN/torc-send $SESSION:PL 'Executors 1-N ready. Assign tasks.'
 
-=== PHASE 2: CREATE EXECUTORS (When PL responds with N) ===
-For i in 1..N:
-  git -C $PROJECT_PATH worktree add .worktrees/executor-\$i -b executor-\$i-\$(date +%Y%m%d) .worktrees/pl
-  tmux new-window -t \$SESSION -n "Exec-\$i" -c "$PROJECT_PATH/.worktrees/executor-\$i"
-  $TORC_BIN/torc-start-agent \$SESSION:Exec-\$i executor $PROJECT_PATH
+=== PHASE 3: MONITOR ===
+Every 5 minutes:
+- Check PL: git -C $PROJECT_PATH/.worktrees/PL log --oneline
+- Check Exec-i: git -C $PROJECT_PATH/.worktrees/Exec-i log --oneline
+- Ask PL status: $TORC_BIN/torc-send $SESSION:PL 'Status: executors progress?'
 
-=== PHASE 3: MONITOR UNTIL COMPLETE ===
-while true; do
-  # Check main branch
-  git -C $PROJECT_PATH status --short; git -C $PROJECT_PATH log --oneline -3
-
-  # Check PL worktree
-  git -C $PROJECT_PATH/.worktrees/pl status --short
-  git -C $PROJECT_PATH/.worktrees/pl log --oneline -5
-
-  # Check all executor worktrees
-  for exec in executor-1 executor-2 executor-3; do
-    if [ -d \"$PROJECT_PATH/.worktrees/\$exec\" ]; then
-      git -C $PROJECT_PATH/.worktrees/\$exec log --oneline | wc -l
-    fi
-  done
-
-  # Ask PL: which executors done?
-  $TORC_BIN/torc-send \$SESSION:PL "Status: Which executors have completed?"
-
-  # If PL says ALL done → Phase 4
-  sleep 300
-done
-
-=== PHASE 4: MERGE ===
-Step 8: PL merges executor branches to their worktree
-git -C $PROJECT_PATH/.worktrees/pl merge executor-N-YYYYMMDD
-
-Step 9: PL merges to main
+=== PHASE 4: FINAL MERGE (When PL reports done) ===
+PL will say: 'All executors merged to my branch'
+Then merge PL to main:
 git -C $PROJECT_PATH checkout main
-git -C $PROJECT_PATH merge pl-YYYYMMDD
+git -C $PROJECT_PATH merge pl-\$(date +%Y%m%d)
+Report to user: 'All work merged to main. Complete.'
 
-Step 10: Report to user
-'All tasks complete. Work merged to main.'
-
-=== COMPLETION RULES ===
-Task NOT complete until:
-- [ ] All executors committed files
-- [ ] All executor branches merged to PL worktree
-- [ ] PL worktree merged to main
-- [ ] You verified main has all changes
-
-DO NOT STOP until ALL checked!
+=== WINDOW NAMING CONVENTION ===
+- PL window: 'PL'
+- Executor windows: 'Exec-1', 'Exec-2', etc.
+Use EXACT names for torc-send commands.
 
 === START NOW ===
-Execute Phase 1 immediately. Do not wait."
+Execute Phase 1. Create PL immediately."
 
 # Send briefing line by line to avoid issues
 echo "$ORCH_BRIEFING" | while IFS= read -r line; do

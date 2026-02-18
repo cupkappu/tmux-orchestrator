@@ -50,5 +50,5 @@ Team state stored in `~/.tmux-orchestrator/state/teams/<name>.json`:
 ```bash
 # Test locally without installing
 ./bin/torc --help
-./bin/torc-deploy ~/test-project --executors 1
+./bin/torc-deploy ~/test-project --spec ~/plan.md
 ```

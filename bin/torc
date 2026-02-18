@@ -11,7 +11,7 @@ usage() {
 Usage: torc <command> [args...]
 
 Commands:
-  deploy <project-path> [--executors <N>]    Deploy a multi-agent team
+  deploy <project-path> [--spec <file>]      Deploy a multi-agent team
   status [team-name]                          Show team/agent status
   send <session:window> <message>             Send message to an agent
   start-agent <session:window> [role]         Start a CLI agent
@@ -24,7 +24,7 @@ Options:
   -h, --help    Show this help message
 
 Examples:
-  torc deploy ~/projects/my-app --executors 2
+  torc deploy ~/projects/my-app --spec ~/plan.md
   torc status my-app
   torc send torc-my-app:PL "What's the status?"
   torc review my-app

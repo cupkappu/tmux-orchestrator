@@ -23,8 +23,8 @@ This installs:
 ## Quick Start
 
 ```bash
-# Deploy a team for a project
-torc deploy ~/projects/my-app --executors 2 --spec ~/specs/feature.md
+# Deploy a team for a project (PL will decide executor count)
+torc deploy ~/projects/my-app --spec ~/specs/feature.md
 
 # Check team status
 torc status my-app
@@ -42,28 +42,33 @@ torc merge my-app executor-1
 torc teardown my-app
 ```
 
-## Architecture
+## Architecture (Dynamic Creation)
 
 ```
-Orchestrator (you) via `torc` commands
-        ↓
-Project Leader (tmux window) - monitors & coordinates
-        ↓
-Executors (tmux windows + git worktrees) - do the work
+Orchestrator (created first)
+        ↓ creates
+Project Leader (analyzes task)
+        ↓ requests N executors
+Executors (created on demand)
 ```
 
-Each executor gets:
-- Their own tmux window
-- Their own git worktree (isolated branch)
-- Their own AI agent instance
+**Why PL decides executor count?**
+- PL is the task expert, understands complexity
+- Simple task → 1 executor, Complex task → 3-4 executors
+- Supports Multi-PL: Frontend PL wants 2, Backend PL wants 3
 
-Work flows: Executor commits → PL reviews → Orchestrator merges → main branch
+**Workflow:**
+1. `torc deploy` → Creates only Orchestrator
+2. Orchestrator creates PL, sends task
+3. PL analyzes → "I need 3 executors for HTML/CSS/JS"
+4. Orchestrator creates 3 executors
+5. Executors work → commit → PL merges → Orchestrator merges to main
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `torc deploy <path> [--executors N] [--spec file]` | Create team, worktrees, start agents |
+| `torc deploy <path> [--spec file]` | Create team (PL decides executor count) |
 | `torc status [team]` | Show team/agent status |
 | `torc send <target> <message>` | Message an agent |
 | `torc review [team]` | Review pending executor commits |

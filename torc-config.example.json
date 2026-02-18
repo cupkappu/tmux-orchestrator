@@ -23,7 +23,6 @@
     }
   },
   "defaults": {
-    "cli": "claude",
-    "executors": 2
+    "cli": "claude"
   }
 }
