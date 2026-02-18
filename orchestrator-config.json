@@ -6,7 +6,7 @@
     },
     "kimi": {
       "name": "Kimi CLI",
-      "start_command": "kimi"
+      "start_command": "kimi --yolo"
     },
     "opencode": {
       "name": "OpenCode",
@@ -15,13 +15,13 @@
   },
   "roles": {
     "orchestrator": {
-      "cli": "claude"
+      "cli": "kimi"
     },
     "project_leader": {
-      "cli": "claude"
+      "cli": "kimi"
     },
     "executor": {
-      "cli": "kimi"
+      "cli": "opencode"
     },
     "project_manager": {
       "cli": "claude"

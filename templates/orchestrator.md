@@ -61,11 +61,11 @@ git -C {{PROJECT_PATH}} worktree add .worktrees/pl -b pl-$(date +%Y%m%d)
 tmux new-window -t {{SESSION}} -n "PL" -c "{{PROJECT_PATH}}/.worktrees/pl"
 
 # Step 7a: Start PL agent
-torc start-agent {{SESSION}}:PL project_leader {{PROJECT_PATH}}
+{{TORC_BIN}}/torc-start-agent {{SESSION}}:PL project_leader {{PROJECT_PATH}}
 sleep 2
 
 # Step 8a: Brief PL with full scope
-torc send {{SESSION}}:PL "You are the sole Project Leader. Execute this complete plan: [USER_PLAN_HERE]. Break into tasks, tell me how many executors you need. Start immediately."
+{{TORC_BIN}}/torc-send {{SESSION}}:PL "You are the sole Project Leader. Execute this complete plan: [USER_PLAN_HERE]. Break into tasks, tell me how many executors you need. Start immediately."
 ```
 
 **MULTI-PL Path:**
@@ -81,14 +81,14 @@ tmux new-window -t {{SESSION}} -n "PL-Frontend" -c "{{PROJECT_PATH}}/.worktrees/
 tmux new-window -t {{SESSION}} -n "PL-Backend" -c "{{PROJECT_PATH}}/.worktrees/pl-backend"
 
 # Step 7b: Start all PL agents
-torc start-agent {{SESSION}}:PL-Frontend project_leader {{PROJECT_PATH}}
-torc start-agent {{SESSION}}:PL-Backend project_leader {{PROJECT_PATH}}
+{{TORC_BIN}}/torc-start-agent {{SESSION}}:PL-Frontend project_leader {{PROJECT_PATH}}
+{{TORC_BIN}}/torc-start-agent {{SESSION}}:PL-Backend project_leader {{PROJECT_PATH}}
 sleep 2
 
 # Step 8b: Brief each PL with their DOMAIN-SPECIFIC scope
-torc send {{SESSION}}:PL-Frontend "You are the Frontend Project Leader. Your DOMAIN: HTML, CSS, JavaScript, UI/UX, client-side logic. Your task: Build the frontend for this plan: [FRONTEND_PORTION_OF_PLAN]. You will coordinate with Backend PL through me. Break into tasks, tell me how many frontend executors you need. Start immediately."
+{{TORC_BIN}}/torc-send {{SESSION}}:PL-Frontend "You are the Frontend Project Leader. Your DOMAIN: HTML, CSS, JavaScript, UI/UX, client-side logic. Your task: Build the frontend for this plan: [FRONTEND_PORTION_OF_PLAN]. You will coordinate with Backend PL through me. Break into tasks, tell me how many frontend executors you need. Start immediately."
 
-torc send {{SESSION}}:PL-Backend "You are the Backend Project Leader. Your DOMAIN: API endpoints, database, server logic, authentication. Your task: Build the backend for this plan: [BACKEND_PORTION_OF_PLAN]. You will coordinate with Frontend PL through me on API contracts. Break into tasks, tell me how many backend executors you need. Start immediately."
+{{TORC_BIN}}/torc-send {{SESSION}}:PL-Backend "You are the Backend Project Leader. Your DOMAIN: API endpoints, database, server logic, authentication. Your task: Build the backend for this plan: [BACKEND_PORTION_OF_PLAN]. You will coordinate with Frontend PL through me on API contracts. Break into tasks, tell me how many backend executors you need. Start immediately."
 ```
 
 ### Phase 2: Create Executors (When PLs respond)
@@ -119,14 +119,14 @@ git -C {{PROJECT_PATH}} worktree add .worktrees/be-exec-2 -b be-exec-2-$(date +%
 # Frontend executors
 tmux new-window -t {{SESSION}} -n "FE-Exec-1" -c "{{PROJECT_PATH}}/.worktrees/fe-exec-1"
 tmux new-window -t {{SESSION}} -n "FE-Exec-2" -c "{{PROJECT_PATH}}/.worktrees/fe-exec-2"
-torc start-agent {{SESSION}}:FE-Exec-1 executor {{PROJECT_PATH}}
-torc start-agent {{SESSION}}:FE-Exec-2 executor {{PROJECT_PATH}}
+{{TORC_BIN}}/torc-start-agent {{SESSION}}:FE-Exec-1 executor {{PROJECT_PATH}}
+{{TORC_BIN}}/torc-start-agent {{SESSION}}:FE-Exec-2 executor {{PROJECT_PATH}}
 
 # Backend executors
 tmux new-window -t {{SESSION}} -n "BE-Exec-1" -c "{{PROJECT_PATH}}/.worktrees/be-exec-1"
 tmux new-window -t {{SESSION}} -n "BE-Exec-2" -c "{{PROJECT_PATH}}/.worktrees/be-exec-2"
-torc start-agent {{SESSION}}:BE-Exec-1 executor {{PROJECT_PATH}}
-torc start-agent {{SESSION}}:BE-Exec-2 executor {{PROJECT_PATH}}
+{{TORC_BIN}}/torc-start-agent {{SESSION}}:BE-Exec-1 executor {{PROJECT_PATH}}
+{{TORC_BIN}}/torc-start-agent {{SESSION}}:BE-Exec-2 executor {{PROJECT_PATH}}
 ```
 
 **Step 12: Let PLs assign tasks to their executors**
@@ -162,7 +162,7 @@ while true; do
         done
 
         # Ask PL for status
-        torc send {{SESSION}}:PL "Status check: Which executors have completed?"
+        {{TORC_BIN}}/torc-send {{SESSION}}:PL "Status check: Which executors have completed?"
     fi
 
     # MULTI-PL monitoring:
@@ -179,7 +179,7 @@ while true; do
             fi
         done
 
-        torc send {{SESSION}}:PL-Frontend "Status: Frontend executors complete? Reply: DONE or IN_PROGRESS"
+        {{TORC_BIN}}/torc-send {{SESSION}}:PL-Frontend "Status: Frontend executors complete? Reply: DONE or IN_PROGRESS"
     fi
 
     # PL-Backend
@@ -195,7 +195,7 @@ while true; do
             fi
         done
 
-        torc send {{SESSION}}:PL-Backend "Status: Backend executors complete? Reply: DONE or IN_PROGRESS"
+        {{TORC_BIN}}/torc-send {{SESSION}}:PL-Backend "Status: Backend executors complete? Reply: DONE or IN_PROGRESS"
     fi
 
     # Check if ALL PLs reported DONE
@@ -212,8 +212,8 @@ done
 
 ```bash
 # Check if Frontend PL and Backend PL have coordinated:
-torc send {{SESSION}}:PL-Frontend "Have you defined API contracts with Backend PL? What endpoints do you need?"
-torc send {{SESSION}}:PL-Backend "Have you confirmed API contracts with Frontend PL? Are endpoints implemented?"
+{{TORC_BIN}}/torc-send {{SESSION}}:PL-Frontend "Have you defined API contracts with Backend PL? What endpoints do you need?"
+{{TORC_BIN}}/torc-send {{SESSION}}:PL-Backend "Have you confirmed API contracts with Frontend PL? Are endpoints implemented?"
 
 # You relay messages between them if needed
 ```

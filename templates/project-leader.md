@@ -51,7 +51,7 @@ Example decision:
 
 **Step 4: Report to Orchestrator IMMEDIATELY**
 ```bash
-torc send {{SESSION}}:Orchestrator "I need 3 executors: [1] HTML structure, [2] CSS styling, [3] Content/JS. I will coordinate their work."
+{{TORC_BIN}}/torc-send {{SESSION}}:Orchestrator "I need 3 executors: [1] HTML structure, [2] CSS styling, [3] Content/JS. I will coordinate their work."
 ```
 
 **Step 5: Start YOUR work (prototype/example)**
@@ -70,21 +70,21 @@ git commit -m "PL: initial prototype"
 ```bash
 # Send clear, specific tasks:
 
-torc send {{SESSION}}:Exec-1 "Task: Create index.html with:
+{{TORC_BIN}}/torc-send {{SESSION}}:Exec-1 "Task: Create index.html with:
 - HTML5 structure
 - Navigation bar with links
 - Hero section placeholder
 - Footer
 Work in your worktree. Commit every 10 min. Report when done."
 
-torc send {{SESSION}}:Exec-2 "Task: Create css/main.css with:
+{{TORC_BIN}}/torc-send {{SESSION}}:Exec-2 "Task: Create css/main.css with:
 - Dark theme (bg: #0d1117, text: #c9d1d9)
 - Cyan accent (#00d4ff)
 - Responsive grid
 - Navigation styling
 Work in your worktree. Commit every 10 min. Report when done."
 
-torc send {{SESSION}}:Exec-3 "Task: Create content pages:
+{{TORC_BIN}}/torc-send {{SESSION}}:Exec-3 "Task: Create content pages:
 - features.html with 3-4 feature cards
 - about.html with project info
 - Link to CSS file
@@ -130,7 +130,7 @@ while true; do
             echo "  Uncommitted: $STATUS"
 
             # Ask executor for status
-            torc send {{SESSION}}:$exec "Status? Is your task complete? Reply: DONE or IN_PROGRESS"
+            {{TORC_BIN}}/torc-send {{SESSION}}:$exec "Status? Is your task complete? Reply: DONE or IN_PROGRESS"
 
             # Check if executor reported DONE
             # If not done, ALL_EXECUTORS_DONE=false
@@ -190,7 +190,7 @@ git commit -m "PL: integrated all executor work"
 
 **Step 12: Report to Orchestrator**
 ```bash
-torc send {{SESSION}}:Orchestrator "All executors complete. Work merged to my branch. Ready to merge to main."
+{{TORC_BIN}}/torc-send {{SESSION}}:Orchestrator "All executors complete. Work merged to my branch. Ready to merge to main."
 ```
 
 ### Phase 5: Final Merge (When Orchestrator approves)
@@ -213,7 +213,7 @@ git -C {{PROJECT_PATH}} status
 
 **Step 14: Final report**
 ```bash
-torc send {{SESSION}}:Orchestrator "Work merged to main. Project complete. Files: [list key files]"
+{{TORC_BIN}}/torc-send {{SESSION}}:Orchestrator "Work merged to main. Project complete. Files: [list key files]"
 ```
 
 ## COMPLETION RULES (CRITICAL)

@@ -30,7 +30,8 @@ tmux_create_window() {
 tmux_send() {
     local target="$1"
     local message="$2"
-    tmux send-keys -t "$target" "$message"
+    # Use -- to prevent message starting with - from being interpreted as flags
+    tmux send-keys -t "$target" -- "$message"
     sleep 0.5
     tmux send-keys -t "$target" Enter
 }

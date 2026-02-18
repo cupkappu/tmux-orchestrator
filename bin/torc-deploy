@@ -143,7 +143,13 @@ echo "Sending briefing to Orchestrator..."
 
 USER_PLAN="${SPEC_FILE_CONTENT:-'Create a project showcase site. Plan and execute autonomously.'}"
 
-ORCH_BRIEFING="=== USER'S PLAN ===
+# Export TORC_BIN for templates to use
+export TORC_BIN
+
+ORCH_BRIEFING="=== ENVIRONMENT ===
+TORC_BIN: $TORC_BIN (Use this path for all torc commands)
+
+=== USER'S PLAN ===
 $USER_PLAN
 
 === YOUR MISSION ===
@@ -155,16 +161,16 @@ git -C $PROJECT_PATH worktree add .worktrees/pl -b pl-\$(date +%Y%m%d)
 tmux new-window -t $SESSION -n 'PL' -c '$PROJECT_PATH/.worktrees/pl'
 
 Step 2: Start PL agent
-torc start-agent \$SESSION:PL project_leader $PROJECT_PATH
+$TORC_BIN/torc-start-agent \$SESSION:PL project_leader $PROJECT_PATH
 
 Step 3: Send plan to PL (include the user's plan above)
-torc send \$SESSION:PL 'Execute this plan: $USER_PLAN. Plan the work, break into tasks, tell me how many executors you need. Start immediately.'
+$TORC_BIN/torc-send \$SESSION:PL "Execute this plan: $USER_PLAN. Plan the work, break into tasks, tell me how many executors you need. Start immediately."
 
 === PHASE 2: CREATE EXECUTORS (When PL responds with N) ===
 For i in 1..N:
   git -C $PROJECT_PATH worktree add .worktrees/executor-\$i -b executor-\$i-\$(date +%Y%m%d) .worktrees/pl
   tmux new-window -t \$SESSION -n "Exec-\$i" -c "$PROJECT_PATH/.worktrees/executor-\$i"
-  torc start-agent \$SESSION:Exec-\$i executor $PROJECT_PATH
+  $TORC_BIN/torc-start-agent \$SESSION:Exec-\$i executor $PROJECT_PATH
 
 === PHASE 3: MONITOR UNTIL COMPLETE ===
 while true; do
@@ -183,7 +189,7 @@ while true; do
   done
 
   # Ask PL: which executors done?
-  torc send \$SESSION:PL 'Status: Which executors have completed?'
+  $TORC_BIN/torc-send \$SESSION:PL "Status: Which executors have completed?"
 
   # If PL says ALL done → Phase 4
   sleep 300
