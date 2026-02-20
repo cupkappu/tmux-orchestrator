@@ -32,7 +32,7 @@ EOF
 
 TEAM_NAME=""
 AGENT_COUNT=""
-CLI_TOOL="kimi"
+CLI_TOOL=$(get_selforg_default_cli "agent")
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -80,18 +80,7 @@ if [ ! -f "$TASKS_FILE" ]; then
     exit 1
 fi
 
-get_cli_by_name() {
-    local name="$1"
-    python3 -c "
-import json
-with open('$TORC_BIN/../orchestrator-config.json') as f:
-    config = json.load(f)
-cli = config['cli_tools'].get('$name', {})
-print(cli.get('start_command', '$name'))
-"
-}
-
-CLI_CMD=$(get_cli_by_name "$CLI_TOOL")
+CLI_CMD=$(get_cli_start_command "$CLI_TOOL")
 
 echo "Spawning $AGENT_COUNT agent(s) for team '$TEAM_NAME'"
 echo "  Project: $PROJECT_PATH"

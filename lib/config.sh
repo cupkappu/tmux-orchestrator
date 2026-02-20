@@ -62,6 +62,67 @@ except Exception:
     echo "${result:-$default_cli}"
 }
 
+# Get the start command for a named CLI tool (e.g. "kimi" → "kimi --yolo")
+# Usage: get_cli_start_command <tool-name>
+# Falls back to the tool name itself if not found in config
+get_cli_start_command() {
+    local tool_name="$1"
+    if [ ! -f "$ORCHESTRATOR_CONFIG" ]; then
+        echo "$tool_name"
+        return
+    fi
+    local result
+    result=$(python3 -c "
+import json, sys
+try:
+    with open('$ORCHESTRATOR_CONFIG') as f:
+        config = json.load(f)
+    tool = sys.argv[1]
+    print(config.get('cli_tools', {}).get(tool, {}).get('start_command', tool))
+except Exception:
+    print(sys.argv[1])
+" "$tool_name" 2>/dev/null)
+    echo "${result:-$tool_name}"
+}
+
+# Get the default CLI tool name for a self-organizing role
+# Usage: get_selforg_default_cli <role>   # role: "lead" or "agent"
+# Follows: modes.self-org.default_agents.<role> → roles.<role-name>.cli
+# Returns the tool name (e.g., "kimi", "opencode")
+# Falls back to TORC_ROOT/orchestrator-config.json if state config lacks modes section.
+get_selforg_default_cli() {
+    local role="$1"
+    # Prefer state dir config; fall back to project root config
+    local config_file="$ORCHESTRATOR_CONFIG"
+    if [ ! -f "$config_file" ] || ! python3 -c "
+import json, sys
+with open('$config_file') as f: c = json.load(f)
+sys.exit(0 if c.get('modes') else 1)
+" 2>/dev/null; then
+        config_file="$TORC_ROOT/orchestrator-config.json"
+    fi
+    if [ ! -f "$config_file" ]; then
+        echo "claude"
+        return
+    fi
+    local result
+    result=$(python3 -c "
+import json, sys
+try:
+    with open(sys.argv[1]) as f:
+        config = json.load(f)
+    role = sys.argv[2]
+    default_agents = config.get('modes', {}).get('self-org', {}).get('default_agents', {})
+    role_name = default_agents.get(role, role)
+    fallback = config.get('defaults', {}).get('cli', 'claude')
+    cli_key = config.get('roles', {}).get(role_name, {}).get('cli', fallback)
+    print(cli_key)
+except Exception:
+    print('claude')
+" "$config_file" "$role" 2>/dev/null)
+    echo "${result:-claude}"
+}
+
 # List all available CLI tools
 list_cli_tools() {
     if [ ! -f "$ORCHESTRATOR_CONFIG" ]; then

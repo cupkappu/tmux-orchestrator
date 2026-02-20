@@ -42,8 +42,8 @@ PROJECT_PATH=""
 SPEC_FILE=""
 TEAMMATE_COUNT=3
 TEAM_NAME_OVERRIDE=""
-LEAD_CLI_NAME="claude"
-TEAMMATE_CLI_NAME="kimi"
+LEAD_CLI_NAME=$(get_selforg_default_cli "lead")
+TEAMMATE_CLI_NAME=$(get_selforg_default_cli "agent")
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -81,19 +81,8 @@ fi
 
 # ── Get CLI commands ───────────────────────────────────────────────────────────
 
-get_cli_command_by_name() {
-    local cli_name="$1"
-    python3 -c "
-import json, sys
-with open('$TORC_BIN/../orchestrator-config.json') as f:
-    config = json.load(f)
-cli_config = config['cli_tools'].get('$cli_name', {})
-print(cli_config.get('start_command', '$cli_name'))
-"
-}
-
-LEAD_CLI=$(get_cli_command_by_name "$LEAD_CLI_NAME")
-TEAMMATE_CLI=$(get_cli_command_by_name "$TEAMMATE_CLI_NAME")
+LEAD_CLI=$(get_cli_start_command "$LEAD_CLI_NAME")
+TEAMMATE_CLI=$(get_cli_start_command "$TEAMMATE_CLI_NAME")
 
 echo "Deploying self-organizing team: $TEAM_NAME"
 echo "  Project:     $PROJECT_PATH"
