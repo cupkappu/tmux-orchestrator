@@ -1,0 +1,25 @@
+#!/bin/bash
+# torc-team-reject - Lead: reject a submitted plan with feedback
+# Usage: torc team reject <team-name> <task-id> '<feedback>'
+
+set -euo pipefail
+TORC_BIN="$(cd "$(dirname "$0")" && pwd)"
+source "$TORC_BIN/../lib/config.sh"
+source "$TORC_BIN/../lib/tasks.sh"
+
+TEAM_NAME="${1:-}"
+TASK_ID="${2:-}"
+FEEDBACK="${3:-}"
+
+if [ -z "$TEAM_NAME" ] || [ -z "$TASK_ID" ] || [ -z "$FEEDBACK" ]; then
+    echo "Usage: torc team reject <team-name> <task-id> '<feedback>'" >&2
+    exit 1
+fi
+
+if [ ! -f "$(tasks_file "$TEAM_NAME")" ]; then
+    echo "Error: no task list for team '$TEAM_NAME'" >&2
+    exit 1
+fi
+
+tasks_reject_plan "$TEAM_NAME" "$TASK_ID" "$FEEDBACK"
+echo "✗ Plan rejected for $TASK_ID. Feedback sent to agent."

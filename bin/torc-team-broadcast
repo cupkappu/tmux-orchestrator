@@ -1,0 +1,44 @@
+#!/bin/bash
+# torc-team-broadcast - Broadcast a message to all agents in a team
+# Usage: torc team broadcast <team-name> '<message>'
+
+set -euo pipefail
+TORC_BIN="$(cd "$(dirname "$0")" && pwd)"
+source "$TORC_BIN/../lib/config.sh"
+source "$TORC_BIN/../lib/state.sh"
+
+TEAM_NAME="${1:-}"
+MESSAGE="${2:-}"
+
+if [ -z "$TEAM_NAME" ] || [ -z "$MESSAGE" ]; then
+    echo "Usage: torc team broadcast <team-name> '<message>'" >&2
+    exit 1
+fi
+
+if ! team_exists "$TEAM_NAME"; then
+    echo "Error: team '$TEAM_NAME' not found" >&2
+    exit 1
+fi
+
+SESSION=$(team_field "$TEAM_NAME" "session")
+
+python3 - "$TORC_BIN" "$TEAM_NAME" "$SESSION" "$MESSAGE" <<'EOF'
+import json, sys, subprocess
+
+torc_bin, team_name, session, message = sys.argv[1:5]
+
+state_file = f"{subprocess.check_output(['git', 'config', '--global', 'user.home'], text=True).strip()}/.tmux-orchestrator/state/teams/{team_name}.json"
+with open(state_file) as f:
+    data = json.load(f)
+
+agents = data.get('agents', {})
+count = 0
+for aid, info in agents.items():
+    window = info.get('window')
+    if window:
+        target = f"{session}:{window}"
+        subprocess.run([f"{torc_bin}/torc-send", target, message], check=False)
+        count += 1
+
+print(f"Broadcast to {count} agent(s)")
+EOF

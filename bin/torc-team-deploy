@@ -1,0 +1,295 @@
+#!/bin/bash
+# torc-team-deploy - Deploy a self-organizing team with Lead coordinator
+# Usage: torc team deploy <project-path> [--spec <file>] [--teammates <n>]
+#
+# Flow:
+#   1. Spawn Lead only
+#   2. Lead reads spec, generates task list (as T-000)
+#   3. Lead spawns teammates
+#   4. Teammates self-claim and work
+
+set -euo pipefail
+TORC_BIN="$(cd "$(dirname "$0")" && pwd)"
+source "$TORC_BIN/../lib/config.sh"
+source "$TORC_BIN/../lib/state.sh"
+source "$TORC_BIN/../lib/tasks.sh"
+source "$TORC_BIN/../lib/worktree.sh"
+source "$TORC_BIN/../lib/tmux.sh"
+
+usage() {
+    cat <<'EOF'
+Usage: torc team deploy <project-path> [options]
+
+Deploy a self-organizing team. Only spawns Lead initially.
+Lead generates tasks from spec, then spawns teammates.
+
+Options:
+  --spec <file>        PRD/requirements document
+  --teammates <n>      Max teammates to spawn (default: 3)
+  --name <team-name>   Override team name
+  --lead-cli <tool>    Lead CLI: claude/kimi/opencode (default: claude)
+  --teammate-cli <tool> Teammate CLI: kimi/opencode/claude (default: kimi)
+
+Examples:
+  torc team deploy ~/projects/my-app --spec prd.md
+  torc team deploy ~/projects/my-app --teammates 2 --lead-cli kimi --teammate-cli opencode
+EOF
+}
+
+# ── Parse args ─────────────────────────────────────────────────────────────────
+
+PROJECT_PATH=""
+SPEC_FILE=""
+TEAMMATE_COUNT=3
+TEAM_NAME_OVERRIDE=""
+LEAD_CLI_NAME="claude"
+TEAMMATE_CLI_NAME="kimi"
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -h|--help)          usage; exit 0 ;;
+        --spec)             SPEC_FILE="$2"; shift 2 ;;
+        --teammates)        TEAMMATE_COUNT="$2"; shift 2 ;;
+        --name)             TEAM_NAME_OVERRIDE="$2"; shift 2 ;;
+        --lead-cli)         LEAD_CLI_NAME="$2"; shift 2 ;;
+        --teammate-cli)     TEAMMATE_CLI_NAME="$2"; shift 2 ;;
+        -*)                 echo "Unknown option: $1" >&2; exit 1 ;;
+        *)                  PROJECT_PATH="$1"; shift ;;
+    esac
+done
+
+if [ -z "$PROJECT_PATH" ]; then
+    echo "Error: project path required" >&2
+    usage
+    exit 1
+fi
+
+PROJECT_PATH="$(cd "$PROJECT_PATH" && pwd)"
+
+if ! git -C "$PROJECT_PATH" rev-parse --git-dir >/dev/null 2>&1; then
+    echo "Error: $PROJECT_PATH is not a git repository" >&2
+    exit 1
+fi
+
+TEAM_NAME="${TEAM_NAME_OVERRIDE:-$(basename "$PROJECT_PATH")}"
+SESSION="torc-$TEAM_NAME"
+
+if team_exists "$TEAM_NAME"; then
+    echo "Error: team '$TEAM_NAME' already exists" >&2
+    exit 1
+fi
+
+# ── Get CLI commands ───────────────────────────────────────────────────────────
+
+get_cli_command_by_name() {
+    local cli_name="$1"
+    python3 -c "
+import json, sys
+with open('$TORC_BIN/../orchestrator-config.json') as f:
+    config = json.load(f)
+cli_config = config['cli_tools'].get('$cli_name', {})
+print(cli_config.get('start_command', '$cli_name'))
+"
+}
+
+LEAD_CLI=$(get_cli_command_by_name "$LEAD_CLI_NAME")
+TEAMMATE_CLI=$(get_cli_command_by_name "$TEAMMATE_CLI_NAME")
+
+echo "Deploying self-organizing team: $TEAM_NAME"
+echo "  Project:     $PROJECT_PATH"
+echo "  Session:     $SESSION"
+echo "  Lead:        $LEAD_CLI_NAME ($LEAD_CLI)"
+echo "  Max teammates: $TEAMMATE_COUNT x $TEAMMATE_CLI_NAME"
+[ -n "$SPEC_FILE" ] && echo "  Spec:        $SPEC_FILE"
+echo ""
+
+# ── Phase 1: Create team state and empty task list ─────────────────────────────
+
+echo "=== Phase 1: Initialize team ==="
+
+ensure_state_dirs
+ensure_tasks_dir
+
+CREATED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+TASKS_FILE=$(tasks_file "$TEAM_NAME")
+
+# Create empty task list (Lead will populate)
+EMPTY_TASKS=$(python3 -c "
+import json
+print(json.dumps({
+    'team': '$TEAM_NAME',
+    'version': 1,
+    'tasks': []
+}, indent=2))
+")
+echo "$EMPTY_TASKS" > "$TASKS_FILE"
+
+# Create team state
+STATE_JSON=$(python3 -c "
+import json
+print(json.dumps({
+    'team_name': '$TEAM_NAME',
+    'project_path': '$PROJECT_PATH',
+    'session': '$SESSION',
+    'created_at': '$CREATED_AT',
+    'architecture': 'self-organizing',
+    'spec_file': '$SPEC_FILE',
+    'max_teammates': $TEAMMATE_COUNT,
+    'teammate_cli': '$TEAMMATE_CLI_NAME',
+    'agents': {}
+}, indent=2))
+")
+write_team_state "$TEAM_NAME" "$STATE_JSON"
+
+echo "  ✓ Team state created"
+
+# ── Phase 2: Create tmux session and Lead ───────────────────────────────────────
+
+echo ""
+echo "=== Phase 2: Spawn Lead ($LEAD_CLI_NAME) ==="
+
+# Create Lead worktree first
+LEAD_WT=$(worktree_create "$PROJECT_PATH" "lead" 2>&1 | tail -1)
+echo "  Lead worktree: $LEAD_WT"
+
+# Create tmux session if not exists
+if ! tmux_session_exists "$SESSION"; then
+    tmux_create_session "$SESSION" "$LEAD_WT" "Lead"
+    sleep 0.5
+else
+    # Session exists, create Lead window
+    tmux_create_window "$SESSION" "Lead" "$LEAD_WT"
+    sleep 0.5
+fi
+
+# Update state
+python3 - "$TEAM_NAME" "$LEAD_WT" <<'PYEOF'
+import json, sys, os
+team_name, lead_wt = sys.argv[1:3]
+state_file = os.path.expanduser(f"~/.tmux-orchestrator/state/teams/{team_name}.json")
+with open(state_file) as f:
+    data = json.load(f)
+data['agents']['lead'] = {
+    'window': 'Lead',
+    'worktree': lead_wt,
+    'cli': '$LEAD_CLI_NAME',
+    'role': 'lead'
+}
+with open(state_file, 'w') as f:
+    json.dump(data, f, indent=2)
+PYEOF
+
+# Start Lead agent
+tmux send-keys -t "$SESSION:Lead" "cd '$LEAD_WT' && $LEAD_CLI" Enter
+sleep 2
+
+echo "  ✓ Lead started"
+
+# ── Phase 3: Lead Briefing ────────────────────────────────────────────────────
+
+echo ""
+echo "=== Phase 3: Briefing Lead ==="
+
+SPEC_CONTENT=""
+if [ -n "$SPEC_FILE" ] && [ -f "$SPEC_FILE" ]; then
+    SPEC_CONTENT=$(cat "$SPEC_FILE")
+fi
+
+LEAD_BRIEFING="=== LEAD AGENT BRIEFING ===
+You are the Team Lead for '$TEAM_NAME'.
+Your mission: Coordinate a team to build this project.
+
+=== PROJECT SPEC ===
+${SPEC_CONTENT:-No spec provided. Read existing project and design tasks.}
+
+=== YOUR WORKFLOW ===
+
+**PHASE 1: Generate Task List (YOU DO THIS NOW)**
+
+1. Read the spec above
+2. Create tasks.json at: $TASKS_FILE
+   Format:
+   {
+     \"team\": \"$TEAM_NAME\",
+     \"version\": 1,
+     \"tasks\": [
+       {
+         \"id\": \"T-001\",
+         \"title\": \"Task name\",
+         \"description\": \"What to do\",
+         \"blocked_by\": [],
+         \"require_plan\": true/false,
+         \"status\": \"pending\",
+         \"owner\": null,
+         ... (other fields)
+       }
+     ]
+   }
+
+3. Rules for task design:
+   - T-001 should be architecture/design (require_plan: true)
+   - Each task completable by one agent
+   - No overlapping file changes
+   - Use blocked_by for dependencies
+   - 4-8 tasks total
+
+4. Write the file:
+   cat > $TASKS_FILE << 'EOF'
+   {your json}
+   EOF
+
+**PHASE 2: Spawn Teammates**
+
+After tasks are created, spawn up to $TEAMMATE_COUNT teammates:
+
+torc team spawn $TEAM_NAME $TEAMMATE_COUNT --cli $TEAMMATE_CLI_NAME
+
+**PHASE 3: Coordinate**
+
+Once teammates are active:
+- Monitor: torc team status $TEAM_NAME
+- Approve plans: torc team approve $TEAM_NAME <task-id>
+- Reject plans: torc team reject $TEAM_NAME <task-id> \"<feedback>\"
+
+**Auto-approval criteria:**
+- Plan includes tests
+- Under 100 lines of change
+- Doesn't break existing interfaces
+
+**COMMUNICATION:**
+- Teammates can message you: torc team msg $TEAM_NAME <agent> lead \"msg\"
+- You can message them: torc team msg $TEAM_NAME lead <agent> \"msg\"
+- Broadcast: torc team msg $TEAM_NAME lead broadcast \"msg\"
+
+**START NOW:**
+
+Generate tasks.json, then spawn teammates.
+"
+
+tmux send-keys -t "$SESSION:Lead" "$LEAD_BRIEFING"
+sleep 0.5
+tmux send-keys -t "$SESSION:Lead" Enter
+
+echo "  ✓ Lead briefed"
+
+# ── Phase 4: Summary ───────────────────────────────────────────────────────────
+
+echo ""
+echo "========================================"
+echo "Team '$TEAM_NAME' deployed!"
+echo "========================================"
+echo ""
+echo "Session: $SESSION"
+echo "Lead:    $SESSION:Lead ($LEAD_CLI_NAME)"
+echo ""
+echo "Lead will:"
+echo "  1. Generate task list from spec"
+echo "  2. Spawn up to $TEAMMATE_COUNT teammates"
+echo "  3. Coordinate autonomously"
+echo ""
+echo "Monitor:"
+echo "  torc team status $TEAM_NAME"
+echo "  tmux attach -t $SESSION"
+echo ""
+echo "Message Lead:"
+echo "  torc send $SESSION:Lead 'your message'"

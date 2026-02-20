@@ -1,0 +1,145 @@
+#!/bin/bash
+# torc-team-msg - Send message between teammates or from Lead to teammate
+# Usage: torc team msg <team-name> <from-agent> <to-agent> <message>
+#        torc team msg <team-name> lead <to-agent> <message>
+#
+# Enables direct peer-to-peer communication in agent teams.
+
+set -euo pipefail
+TORC_BIN="$(cd "$(dirname "$0")" && pwd)"
+source "$TORC_BIN/../lib/config.sh"
+source "$TORC_BIN/../lib/state.sh"
+
+usage() {
+    cat <<'EOF'
+Usage: torc team msg <team-name> <from> <to> <message>
+
+Send direct message between agents in a team.
+
+  <from>  Sender agent ID (e.g., "agent-1", "lead") or "user"
+  <to>    Recipient agent ID (e.g., "agent-2", "lead", "broadcast")
+
+Examples:
+  torc team msg my-app agent-1 agent-2 "Can you share your API design?"
+  torc team msg my-app lead agent-1 "Plan approved, start implementation"
+  torc team msg my-app user broadcast "All agents, sync up on the interface"
+  torc team msg my-app agent-1 lead "Need clarification on requirement X"
+EOF
+}
+
+if [ $# -lt 4 ]; then
+    usage
+    exit 1
+fi
+
+TEAM_NAME="$1"
+FROM="$2"
+TO="$3"
+shift 3
+MESSAGE="$*"
+
+if ! team_exists "$TEAM_NAME"; then
+    echo "Error: team '$TEAM_NAME' not found" >&2
+    exit 1
+fi
+
+# Get session name
+SESSION=$(team_field "$TEAM_NAME" "session")
+if [ -z "$SESSION" ]; then
+    echo "Error: could not get session for team '$TEAM_NAME'" >&2
+    exit 1
+fi
+
+# Resolve window name from agent ID
+resolve_window() {
+    local agent="$1"
+    case "$agent" in
+        lead|Lead)
+            echo "Lead"
+            ;;
+        agent-*)
+            echo "Agent-${agent#agent-}"
+            ;;
+        user)
+            echo ""
+            ;;
+        broadcast)
+            echo "broadcast"
+            ;;
+        *)
+            # Try to find in team state
+            team_field "$TEAM_NAME" "agents.$agent.window" 2>/dev/null || echo "$agent"
+            ;;
+    esac
+}
+
+# Send message
+send_to_window() {
+    local target="$1"
+    local msg="$2"
+    
+    # Format message with sender info
+    local formatted
+    if [ "$FROM" = "user" ]; then
+        formatted="[User → You] $msg"
+    else
+        formatted="[$FROM → You] $msg"
+    fi
+    
+    if "$TORC_BIN/torc-send" "$SESSION:$target" "$formatted" 2>/dev/null; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Handle broadcast
+if [ "$TO" = "broadcast" ]; then
+    echo "Broadcasting from $FROM to all agents in $TEAM_NAME..."
+    
+    AGENTS_JSON=$(team_field "$TEAM_NAME" "agents")
+    SENT=0
+    FAILED=0
+    
+    while IFS= read -r agent_id; do
+        [ -z "$agent_id" ] && continue
+        [ "$agent_id" = "$FROM" ] && continue  # Don't send to self
+        
+        window=$(resolve_window "$agent_id")
+        [ -z "$window" ] && continue
+        
+        if send_to_window "$window" "$MESSAGE"; then
+            echo "  ✓ $agent_id"
+            SENT=$((SENT + 1))
+        else
+            echo "  ✗ $agent_id (not reachable)"
+            FAILED=$((FAILED + 1))
+        fi
+    done < <(echo "$AGENTS_JSON" | python3 -c "
+import json, sys
+agents = json.load(sys.stdin)
+for aid in agents.keys():
+    print(aid)
+")
+    
+    echo ""
+    echo "Broadcast complete: $SENT sent, $FAILED failed"
+    
+else
+    # Single target
+    TARGET_WINDOW=$(resolve_window "$TO")
+    
+    if [ -z "$TARGET_WINDOW" ]; then
+        echo "Error: could not resolve window for '$TO'" >&2
+        exit 1
+    fi
+    
+    echo "Sending message from $FROM to $TO ($TARGET_WINDOW)..."
+    
+    if send_to_window "$TARGET_WINDOW" "$MESSAGE"; then
+        echo "✓ Message delivered"
+    else
+        echo "✗ Failed to deliver (agent may not be running)" >&2
+        exit 1
+    fi
+fi
