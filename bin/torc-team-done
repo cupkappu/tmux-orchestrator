@@ -1,0 +1,26 @@
+#!/bin/bash
+# torc-team-done - Agent: mark a task as complete
+# Usage: torc team done <team-name> <task-id> ['<result-summary>']
+
+set -euo pipefail
+TORC_BIN="$(cd "$(dirname "$0")" && pwd)"
+source "$TORC_BIN/../lib/config.sh"
+source "$TORC_BIN/../lib/state.sh"
+source "$TORC_BIN/../lib/tasks.sh"
+
+TEAM_NAME="${1:-}"
+TASK_ID="${2:-}"
+RESULT="${3:-}"
+
+if [ -z "$TEAM_NAME" ] || [ -z "$TASK_ID" ]; then
+    echo "Usage: torc team done <team-name> <task-id> ['<result-summary>']" >&2
+    exit 1
+fi
+
+if [ ! -f "$(tasks_file "$TEAM_NAME")" ]; then
+    echo "Error: no task list for team '$TEAM_NAME'" >&2
+    exit 1
+fi
+
+tasks_done "$TEAM_NAME" "$TASK_ID" "$RESULT"
+echo "✓ Task $TASK_ID marked as done."

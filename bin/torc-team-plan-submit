@@ -1,0 +1,26 @@
+#!/bin/bash
+# torc-team-plan-submit - Agent: submit a plan for task approval
+# Usage: torc team plan-submit <team-name> <task-id> '<plan-text>'
+
+set -euo pipefail
+TORC_BIN="$(cd "$(dirname "$0")" && pwd)"
+source "$TORC_BIN/../lib/config.sh"
+source "$TORC_BIN/../lib/state.sh"
+source "$TORC_BIN/../lib/tasks.sh"
+
+TEAM_NAME="${1:-}"
+TASK_ID="${2:-}"
+PLAN_TEXT="${3:-}"
+
+if [ -z "$TEAM_NAME" ] || [ -z "$TASK_ID" ] || [ -z "$PLAN_TEXT" ]; then
+    echo "Usage: torc team plan-submit <team-name> <task-id> '<plan-text>'" >&2
+    exit 1
+fi
+
+if [ ! -f "$(tasks_file "$TEAM_NAME")" ]; then
+    echo "Error: no task list for team '$TEAM_NAME'" >&2
+    exit 1
+fi
+
+tasks_submit_plan "$TEAM_NAME" "$TASK_ID" "$PLAN_TEXT"
+echo "Plan submitted for $TASK_ID"

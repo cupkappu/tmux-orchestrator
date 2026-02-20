@@ -1,0 +1,71 @@
+#!/bin/bash
+# torc-team - Unified entry point for team commands
+# Usage: torc team <command> [args]
+#
+# Commands:
+#   init        Create a team with task list
+#   spawn       Spawn N agents for a team
+#   claim       Agent: claim next available task
+#   plan-submit Agent: submit plan for approval
+#   approve     Lead: approve submitted plan
+#   reject      Lead: reject plan with feedback
+#   done        Agent: mark task complete
+#   status      Show team/task/agent status
+#   broadcast   Message all agents
+
+set -euo pipefail
+TORC_BIN="$(cd "$(dirname "$0")" && pwd)"
+
+usage() {
+    cat <<'EOF'
+Usage: torc team <command> [args]
+
+Commands:
+  init <project> [--spec <file>]     Create team with task list
+  spawn <team> <n> [--cli <tool>]   Spawn N agents
+  claim <team> <agent>              Agent: claim next task
+  plan-submit <team> <task> <plan>  Agent: submit plan
+  approve <team> <task>              Lead: approve plan
+  reject <team> <task> <feedback>   Lead: reject plan
+  done <team> <task> [<result>]     Agent: mark done
+  status <team> [--task <id>]       Show status
+  broadcast <team> <msg>            Message all agents
+  inbox <team> <agent>              Read & clear agent inbox
+  monitor <team> [--tail <n>]       Live event-stream window
+
+Examples:
+  torc team init ~/my-app --spec plan.md
+  torc team spawn my-app 3
+  torc team status my-app
+  torc team monitor my-app           # open live event stream
+  torc team inbox my-app Agent-1     # check pushed notifications
+EOF
+}
+
+if [ $# -lt 1 ]; then
+    usage
+    exit 1
+fi
+
+COMMAND="${1:-}"
+shift
+
+case "$COMMAND" in
+    init|spawn|claim|plan-submit|approve|reject|done|status|broadcast|inbox|monitor)
+        if [ -x "$TORC_BIN/torc-team-$COMMAND" ]; then
+            "$TORC_BIN/torc-team-$COMMAND" "$@"
+        else
+            echo "Error: command '$COMMAND' not implemented" >&2
+            exit 1
+        fi
+        ;;
+    -h|--help|help)
+        usage
+        exit 0
+        ;;
+    *)
+        echo "Unknown command: $COMMAND" >&2
+        usage
+        exit 1
+        ;;
+esac

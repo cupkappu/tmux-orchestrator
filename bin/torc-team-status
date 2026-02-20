@@ -1,0 +1,136 @@
+#!/bin/bash
+# torc-team-status - Show task list and agent status for a team
+# Usage: torc team status <team-name> [--task <id>]
+
+set -euo pipefail
+TORC_BIN="$(cd "$(dirname "$0")" && pwd)"
+source "$TORC_BIN/../lib/config.sh"
+source "$TORC_BIN/../lib/state.sh"
+source "$TORC_BIN/../lib/tasks.sh"
+
+usage() {
+    cat <<'EOF'
+Usage: torc team status <team-name> [--task <id>]
+
+  --task <id>   Show full detail for one task (including plan text)
+
+Examples:
+  torc team status my-app
+  torc team status my-app --task T-002
+EOF
+}
+
+TEAM_NAME=""
+DETAIL_TASK=""
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -h|--help) usage; exit 0 ;;
+        --task)    DETAIL_TASK="$2"; shift 2 ;;
+        -*)        echo "Unknown option: $1" >&2; exit 1 ;;
+        *)         TEAM_NAME="$1"; shift ;;
+    esac
+done
+
+if [ -z "$TEAM_NAME" ]; then
+    echo "Error: team name required" >&2
+    usage; exit 1
+fi
+
+if ! team_exists "$TEAM_NAME"; then
+    echo "Error: team '$TEAM_NAME' not found" >&2
+    exit 1
+fi
+
+TASKS_FILE="$(tasks_file "$TEAM_NAME")"
+STATE_FILE="$(team_state_file "$TEAM_NAME")"
+
+if [ ! -f "$TASKS_FILE" ]; then
+    echo "Error: no task list found for '$TEAM_NAME'" >&2
+    echo "  Run 'torc team init' first" >&2
+    exit 1
+fi
+
+if [ -n "$DETAIL_TASK" ]; then
+    python3 - "$TASKS_FILE" "$DETAIL_TASK" <<'EOF'
+import json, sys
+
+with open(sys.argv[1]) as f:
+    data = json.load(f)
+
+task_id = sys.argv[2]
+t = next((t for t in data['tasks'] if t['id'] == task_id), None)
+if not t:
+    print(f"Task {task_id} not found")
+    sys.exit(1)
+
+STATUS = {'pending': '○', 'in_progress': '◑', 'done': '●'}
+icon = STATUS.get(t['status'], '?')
+print(f"{icon} {t['id']}  {t['title']}")
+print(f"   Status:  {t['status']}")
+if t.get('owner'):
+    print(f"   Owner:   {t['owner']}")
+if t.get('blocked_by'):
+    print(f"   Needs:   {', '.join(t['blocked_by'])}")
+print(f"   Requires plan: {'yes' if t.get('require_plan') else 'no'}")
+print()
+print(f"Description:\n  {t['description']}")
+
+if t.get('plan'):
+    print()
+    print(f"Submitted Plan:\n  {t['plan']}")
+if t.get('plan_feedback'):
+    print()
+    print(f"Feedback:\n  {t['plan_feedback']}")
+EOF
+    exit 0
+fi
+
+echo "=== Team: $TEAM_NAME ==="
+echo ""
+
+SESSION=$(team_field "$TEAM_NAME" "session")
+if tmux_session_exists "$SESSION" 2>/dev/null; then
+    echo "Session: $SESSION (running)"
+else
+    echo "Session: $SESSION (not running)"
+fi
+echo ""
+
+echo "--- Tasks ---"
+tasks_list "$TEAM_NAME"
+echo ""
+
+echo "--- Agents ---"
+python3 - "$STATE_FILE" <<'EOF'
+import json, sys
+
+with open(sys.argv[1]) as f:
+    data = json.load(f)
+
+agents = data.get('agents', {})
+if not agents:
+    print("  No agents spawned yet")
+else:
+    for aid, info in agents.items():
+        status = info.get('status', 'unknown')
+        cli = info.get('cli', 'unknown')
+        print(f"  {aid}: {status} ({cli})")
+EOF
+
+echo ""
+echo "--- Actions Needed ---"
+python3 - "$TASKS_FILE" <<'EOF'
+import json, sys
+
+with open(sys.argv[1]) as f:
+    data = json.load(f)
+
+submitted = [t for t in data['tasks'] if t.get('plan_status') == 'submitted']
+if submitted:
+    print("Plans awaiting approval:")
+    for t in submitted:
+        print(f"  - {t['id']} ({t.get('owner', 'unclaimed')})")
+else:
+    print("No pending approvals")
+EOF

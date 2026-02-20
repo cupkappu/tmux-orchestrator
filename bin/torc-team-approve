@@ -1,0 +1,25 @@
+#!/bin/bash
+# torc-team-approve - Lead: approve a submitted plan
+# Usage: torc team approve <team-name> <task-id>
+
+set -euo pipefail
+TORC_BIN="$(cd "$(dirname "$0")" && pwd)"
+source "$TORC_BIN/../lib/config.sh"
+source "$TORC_BIN/../lib/state.sh"
+source "$TORC_BIN/../lib/tasks.sh"
+
+TEAM_NAME="${1:-}"
+TASK_ID="${2:-}"
+
+if [ -z "$TEAM_NAME" ] || [ -z "$TASK_ID" ]; then
+    echo "Usage: torc team approve <team-name> <task-id>" >&2
+    exit 1
+fi
+
+if [ ! -f "$(tasks_file "$TEAM_NAME")" ]; then
+    echo "Error: no task list for team '$TEAM_NAME'" >&2
+    exit 1
+fi
+
+tasks_approve_plan "$TEAM_NAME" "$TASK_ID"
+echo "✓ Plan approved for $TASK_ID. Agent can start work."

@@ -24,8 +24,28 @@
       "cli": "opencode"
     }
   },
+  "modes": {
+    "hierarchy": {
+      "description": "Orchestrator → PL → Executors (PL assigns tasks)",
+      "skills": ["torc-orchestrator", "torc-pm-oversight"],
+      "default_agents": {
+        "orchestrator": "orchestrator",
+        "pl": "project_leader",
+        "executor": "executor"
+      }
+    },
+    "self-org": {
+      "description": "Lead → Task Pool → Agents self-claim (Lead approves plans)",
+      "skills": ["torc-team-lead", "torc-team-agent"],
+      "default_agents": {
+        "lead": "project_leader",
+        "agent": "executor"
+      }
+    }
+  },
   "defaults": {
     "cli": "claude",
-    "state_dir": "/Users/kifuko/.tmux-orchestrator"
+    "state_dir": "/Users/kifuko/.tmux-orchestrator",
+    "mode": "auto"
   }
 }

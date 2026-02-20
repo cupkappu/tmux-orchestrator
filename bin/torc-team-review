@@ -1,0 +1,105 @@
+#!/bin/bash
+# torc-team-review - Review teammate work in self-organizing teams
+# Usage: torc team review <team-name>
+#
+# Shows commits and changes from each teammate worktree
+
+set -euo pipefail
+TORC_BIN="$(cd "$(dirname "$0")" && pwd)"
+source "$TORC_BIN/../lib/config.sh"
+source "$TORC_BIN/../lib/state.sh"
+source "$TORC_BIN/../lib/worktree.sh"
+
+usage() {
+    cat <<'EOF'
+Usage: torc team review <team-name>
+
+Review work from all teammates in a self-organizing team.
+Shows commits ahead of main for each agent worktree.
+
+Examples:
+  torc team review my-app
+EOF
+}
+
+if [ $# -lt 1 ]; then
+    usage
+    exit 1
+fi
+
+TEAM_NAME="$1"
+
+if ! team_exists "$TEAM_NAME"; then
+    echo "Error: team '$TEAM_NAME' not found" >&2
+    exit 1
+fi
+
+PROJECT_PATH=$(team_field "$TEAM_NAME" "project_path")
+TASKS_FILE="$HOME/.tmux-orchestrator/tasks/${TEAM_NAME}.json"
+main_branch=$(get_main_branch "$PROJECT_PATH")
+
+echo "=== Team Review: $TEAM_NAME ==="
+echo "Project: $PROJECT_PATH"
+echo "Main branch: $main_branch"
+echo ""
+
+# Show task completion status
+echo "=== Task Completion ==="
+if [ -f "$TASKS_FILE" ]; then
+    python3 - "$TASKS_FILE" <<'EOF'
+import json, sys
+with open(sys.argv[1]) as f:
+    data = json.load(f)
+
+total = len(data['tasks'])
+done = sum(1 for t in data['tasks'] if t['status'] == 'done')
+in_progress = sum(1 for t in data['tasks'] if t['status'] == 'in_progress')
+
+print(f"Progress: {done}/{total} complete, {in_progress} in progress")
+print()
+for t in data['tasks']:
+    status_icon = '●' if t['status'] == 'done' else '◑' if t['status'] == 'in_progress' else '○'
+    owner = f" [{t['owner']}]" if t.get('owner') else ''
+    print(f"  {status_icon} {t['id']}{owner}: {t['title']}")
+EOF
+else
+    echo "  No task list found"
+fi
+
+echo ""
+echo "=== Worktree Commits ==="
+
+# Check each worktree
+for wt in "$PROJECT_PATH/.worktrees"/agent-* "$PROJECT_PATH/.worktrees"/lead; do
+    [ -d "$wt" ] || continue
+    wt_name=$(basename "$wt")
+    branch=$(git -C "$wt" branch --show-current 2>/dev/null || echo "unknown")
+    
+    echo ""
+    echo "--- $wt_name ($branch) ---"
+    
+    # Commits ahead of main
+    ahead=$(git -C "$PROJECT_PATH" rev-list --count "$main_branch..$branch" 2>/dev/null || echo "0")
+    if [ "$ahead" -gt 0 ]; then
+        echo "Commits ahead of $main_branch: $ahead"
+        git -C "$PROJECT_PATH" log "$main_branch..$branch" --oneline 2>/dev/null | head -5
+        [ "$ahead" -gt 5 ] && echo "  ... and $((ahead - 5)) more"
+    else
+        echo "No commits ahead of $main_branch"
+    fi
+    
+    # Files changed (if any commits)
+    if [ "$ahead" -gt 0 ]; then
+        echo "Files changed:"
+        git -C "$PROJECT_PATH" diff --name-only "$main_branch..$branch" 2>/dev/null | head -5
+        local changed
+        changed=$(git -C "$PROJECT_PATH" diff --name-only "$main_branch..$branch" 2>/dev/null | wc -l)
+        [ "$changed" -gt 5 ] && echo "  ... and $((changed - 5)) more files"
+    fi
+done
+
+echo ""
+echo "=== Next Steps ==="
+echo "  torc team merge $TEAM_NAME <agent-name>  # Merge specific agent"
+echo "  torc merge $TEAM_NAME <agent-name>       # Use legacy merge"
+echo "  torc teardown $TEAM_NAME                  # Clean up when done"

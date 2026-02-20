@@ -1,0 +1,171 @@
+#!/bin/bash
+# torc-team-merge - Merge teammate work to main in self-organizing teams
+# Usage: torc team merge <team-name> [agent-name]
+#
+# If agent-name provided: merge that specific agent
+# If no agent-name: merge all completed agents in dependency order
+
+set -euo pipefail
+TORC_BIN="$(cd "$(dirname "$0")" && pwd)"
+source "$TORC_BIN/../lib/config.sh"
+source "$TORC_BIN/../lib/state.sh"
+source "$TORC_BIN/../lib/worktree.sh"
+
+usage() {
+    cat <<'EOF'
+Usage: torc team merge <team-name> [agent-name]
+
+Merge teammate work to main branch.
+
+With agent-name: merge specific agent
+Without agent-name: merge all agents with completed tasks
+
+Examples:
+  torc team merge my-app agent-1    # Merge agent-1 only
+  torc team merge my-app            # Merge all completed agents
+EOF
+}
+
+if [ $# -lt 1 ]; then
+    usage
+    exit 1
+fi
+
+TEAM_NAME="$1"
+SPECIFIC_AGENT="${2:-}"
+
+if ! team_exists "$TEAM_NAME"; then
+    echo "Error: team '$TEAM_NAME' not found" >&2
+    exit 1
+fi
+
+PROJECT_PATH=$(team_field "$TEAM_NAME" "project_path")
+TASKS_FILE="$HOME/.tmux-orchestrator/tasks/${TEAM_NAME}.json"
+main_branch=$(get_main_branch "$PROJECT_PATH")
+
+cd "$PROJECT_PATH"
+
+echo "=== Merge: $TEAM_NAME ==="
+echo "Project: $PROJECT_PATH"
+echo "Main branch: $main_branch"
+echo ""
+
+# Function to get branch for agent
+get_agent_branch() {
+    local agent="$1"
+    local wt="$PROJECT_PATH/.worktrees/$agent"
+    if [ -d "$wt" ]; then
+        git -C "$wt" branch --show-current 2>/dev/null
+    fi
+}
+
+# Function to check if agent has completed tasks
+agent_has_completed_tasks() {
+    local agent="$1"
+    [ -f "$TASKS_FILE" ] && python3 - "$TASKS_FILE" "$agent" <<'EOF'
+import json, sys
+with open(sys.argv[1]) as f:
+    data = json.load(f)
+agent = sys.argv[2]
+# Check if agent has any done tasks
+for t in data['tasks']:
+    if t.get('owner') == agent and t['status'] == 'done':
+        sys.exit(0)  # Yes, has completed tasks
+sys.exit(1)  # No completed tasks
+EOF
+}
+
+# Merge specific agent
+if [ -n "$SPECIFIC_AGENT" ]; then
+    BRANCH=$(get_agent_branch "$SPECIFIC_AGENT")
+    if [ -z "$BRANCH" ]; then
+        echo "Error: no worktree found for $SPECIFIC_AGENT" >&2
+        exit 1
+    fi
+    
+    echo "Merging $SPECIFIC_AGENT (branch: $BRANCH)..."
+    
+    # Stash any changes
+    git stash push -m "merge-stash" 2>/dev/null || true
+    
+    # Checkout main and merge
+    git checkout "$main_branch"
+    if git merge "$BRANCH" -m "Merge $SPECIFIC_AGENT work"; then
+        echo "✓ Merged $SPECIFIC_AGENT to $main_branch"
+    else
+        echo "✗ Merge conflict! Resolve manually:"
+        echo "  git status"
+        echo "  # Resolve conflicts, then:"
+        echo "  git add . && git commit"
+        exit 1
+    fi
+    
+    # Pop stash
+    git stash pop 2>/dev/null || true
+    
+else
+    # Merge all agents with completed tasks
+    echo "Merging all agents with completed tasks..."
+    echo ""
+    
+    # Stash any changes
+    git stash push -m "merge-stash" 2>/dev/null || true
+    
+    # Checkout main
+    git checkout "$main_branch"
+    
+    MERGED=()
+    FAILED=()
+    
+    for wt in "$PROJECT_PATH/.worktrees"/agent-*; do
+        [ -d "$wt" ] || continue
+        agent=$(basename "$wt")
+        branch=$(get_agent_branch "$agent")
+        
+        if [ -z "$branch" ]; then
+            continue
+        fi
+        
+        # Check if agent has completed tasks
+        if ! agent_has_completed_tasks "$agent"; then
+            echo "  ⊘ $agent - no completed tasks, skipping"
+            continue
+        fi
+        
+        echo "  → Merging $agent (branch: $branch)..."
+        
+        if git merge "$branch" -m "Merge $agent work" --no-edit 2>/dev/null; then
+            echo "    ✓ Merged"
+            MERGED+=("$agent")
+        else
+            echo "    ✗ Conflict, aborting this merge"
+            git merge --abort 2>/dev/null || true
+            FAILED+=("$agent")
+        fi
+    done
+    
+    # Pop stash
+    git stash pop 2>/dev/null || true
+    
+    echo ""
+    echo "=== Merge Summary ==="
+    echo "Successfully merged: ${#MERGED[@]} agent(s)"
+    for a in "${MERGED[@]}"; do
+        echo "  ✓ $a"
+    done
+    
+    if [ ${#FAILED[@]} -gt 0 ]; then
+        echo ""
+        echo "Failed to merge: ${#FAILED[@]} agent(s)"
+        for a in "${FAILED[@]}"; do
+            echo "  ✗ $a"
+        done
+        echo ""
+        echo "Resolve manually with:"
+        echo "  torc team merge $TEAM_NAME <agent-name>"
+    fi
+fi
+
+echo ""
+echo "Current branch: $(git branch --show-current)"
+echo "Commits ahead of origin: $(git rev-list --count HEAD...origin/$main_branch 2>/dev/null || echo 'unknown')"

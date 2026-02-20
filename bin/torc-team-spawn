@@ -1,0 +1,202 @@
+#!/bin/bash
+# torc-team-spawn - Spawn N agent teammates for a team
+# Usage: torc team spawn <team-name> <n> [--cli <cli-tool>]
+#
+# Creates worktree + tmux window per agent, starts CLI with briefing.
+# Agents run autonomously: claim → plan → (wait approval) → work → done → claim next
+
+set -euo pipefail
+TORC_BIN="$(cd "$(dirname "$0")" && pwd)"
+source "$TORC_BIN/../lib/config.sh"
+source "$TORC_BIN/../lib/state.sh"
+source "$TORC_BIN/../lib/tasks.sh"
+source "$TORC_BIN/../lib/worktree.sh"
+source "$TORC_BIN/../lib/tmux.sh"
+
+usage() {
+    cat <<'EOF'
+Usage: torc team spawn <team-name> <n> [options]
+
+Arguments:
+  team-name    Team to spawn agents for
+  n            Number of agents to spawn
+
+Options:
+  --cli <tool> CLI tool to use (kimi, opencode, claude). Default: kimi
+
+Examples:
+  torc team spawn my-app 3
+  torc team spawn my-app 2 --cli opencode
+EOF
+}
+
+TEAM_NAME=""
+AGENT_COUNT=""
+CLI_TOOL="kimi"
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -h|--help)   usage; exit 0 ;;
+        --cli)       CLI_TOOL="$2"; shift 2 ;;
+        -*)          echo "Unknown option: $1" >&2; exit 1 ;;
+        *)
+            if [ -z "$TEAM_NAME" ]; then
+                TEAM_NAME="$1"
+            elif [ -z "$AGENT_COUNT" ]; then
+                AGENT_COUNT="$1"
+            else
+                echo "Error: too many arguments" >&2
+                exit 1
+            fi
+            shift
+            ;;
+    esac
+done
+
+if [ -z "$TEAM_NAME" ] || [ -z "$AGENT_COUNT" ]; then
+    echo "Error: team name and agent count required" >&2
+    usage
+    exit 1
+fi
+
+if ! [[ "$AGENT_COUNT" =~ ^[0-9]+$ ]] || [ "$AGENT_COUNT" -lt 1 ]; then
+    echo "Error: agent count must be a positive integer" >&2
+    exit 1
+fi
+
+if ! team_exists "$TEAM_NAME"; then
+    echo "Error: team '$TEAM_NAME' not found" >&2
+    echo "  Run 'torc team init <project>' first." >&2
+    exit 1
+fi
+
+PROJECT_PATH=$(team_field "$TEAM_NAME" "project_path")
+SESSION=$(team_field "$TEAM_NAME" "session")
+TASKS_FILE=$(tasks_file "$TEAM_NAME")
+
+if [ ! -f "$TASKS_FILE" ]; then
+    echo "Error: no task list found for team '$TEAM_NAME'" >&2
+    echo "  Run 'torc team init' first." >&2
+    exit 1
+fi
+
+get_cli_by_name() {
+    local name="$1"
+    python3 -c "
+import json
+with open('$TORC_BIN/../orchestrator-config.json') as f:
+    config = json.load(f)
+cli = config['cli_tools'].get('$name', {})
+print(cli.get('start_command', '$name'))
+"
+}
+
+CLI_CMD=$(get_cli_by_name "$CLI_TOOL")
+
+echo "Spawning $AGENT_COUNT agent(s) for team '$TEAM_NAME'"
+echo "  Project: $PROJECT_PATH"
+echo "  Session: $SESSION"
+echo "  CLI: $CLI_TOOL"
+echo ""
+
+if ! tmux_session_exists "$SESSION"; then
+    echo "Creating tmux session '$SESSION'..."
+    tmux_create_session "$SESSION" "$PROJECT_PATH" "Team"
+    sleep 0.5
+    echo "  ✓ Session created"
+    echo ""
+fi
+
+SPAWNED=()
+
+for i in $(seq 1 "$AGENT_COUNT"); do
+    AGENT_ID="agent-$i"
+    WINDOW_NAME="Agent-$i"
+    
+    if tmux_window_exists "$SESSION:$WINDOW_NAME" 2>/dev/null; then
+        echo "  ⚠ Agent-$i already exists, skipping"
+        continue
+    fi
+    
+    echo "  Creating Agent-$i..."
+    
+    WT_PATH=$(worktree_create "$PROJECT_PATH" "$AGENT_ID" 2>&1 | tail -1) || {
+        echo "    ✗ Failed to create worktree: $WT_PATH" >&2
+        continue
+    }
+    echo "    ✓ Worktree: $WT_PATH"
+    
+    tmux_create_window "$SESSION" "$WINDOW_NAME" "$WT_PATH"
+    sleep 0.5
+    echo "    ✓ Window: $SESSION:$WINDOW_NAME"
+    
+    python3 - "$TEAM_NAME" "$AGENT_ID" "$WINDOW_NAME" "$WT_PATH" "$CLI_TOOL" <<'EOF'
+import json, sys, os
+team_name, agent_id, window, worktree, cli = sys.argv[1:6]
+
+state_file = f"{os.path.expanduser('~')}/.tmux-orchestrator/state/teams/{team_name}.json"
+with open(state_file) as f:
+    data = json.load(f)
+
+if 'agents' not in data:
+    data['agents'] = {}
+
+data['agents'][agent_id] = {
+    'window': window,
+    'worktree': worktree,
+    'cli': cli,
+    'status': 'spawning'
+}
+
+with open(state_file, 'w') as f:
+    json.dump(data, f, indent=2)
+EOF
+    
+    TARGET="$SESSION:$WINDOW_NAME"
+    
+    echo "    Starting $CLI_CMD..."
+    tmux send-keys -t "$TARGET" "cd '$WT_PATH' && $CLI_CMD" Enter
+    sleep 8   # wait for CLI to fully load before sending briefing
+    
+    BRIEFING="=== AGENT BRIEFING ===
+You are Agent-$i in team '$TEAM_NAME'.
+Worktree: $WT_PATH
+
+YOUR WORKFLOW:
+1. Claim task: torc team claim $TEAM_NAME $WINDOW_NAME
+2. If require_plan=true: write plan → submit → wait approval
+3. Do work in $WT_PATH, commit changes
+4. Mark done: torc team done $TEAM_NAME <task-id> 'result'
+5. Repeat
+
+COMMANDS:
+- Claim: torc team claim $TEAM_NAME $WINDOW_NAME
+- Submit plan: torc team plan-submit $TEAM_NAME <task-id> 'plan'
+- Mark done: torc team done $TEAM_NAME <task-id> 'result'
+- Message: torc team msg $TEAM_NAME $WINDOW_NAME <to-agent> <msg>
+- Status: torc team status $TEAM_NAME
+
+EXIT: If claim fails 3 times → all tasks done → type 'exit'
+
+START NOW: torc team claim $TEAM_NAME $WINDOW_NAME"
+    
+    "$TORC_BIN/torc-send" "$TARGET" "$BRIEFING"
+    
+    echo "    ✓ Agent started with briefing"
+    echo ""
+    
+    SPAWNED+=("$AGENT_ID")
+done
+
+echo "=== Spawn Complete ==="
+echo "Spawned ${#SPAWNED[@]} agent(s):"
+for agent in "${SPAWNED[@]}"; do
+    echo "  - $agent"
+done
+echo ""
+echo "Monitor progress:"
+echo "  torc team status $TEAM_NAME"
+echo "  tmux attach -t $SESSION"
+echo ""
+echo "Agents will self-claim tasks and work autonomously."
+echo "Approve plans with: torc team approve $TEAM_NAME <task-id>"
