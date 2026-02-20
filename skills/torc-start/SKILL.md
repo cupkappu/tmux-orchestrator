@@ -71,13 +71,6 @@ torc team deploy <project-path> --spec <spec-file> \
 torc deploy <project-path> --spec <spec-file>
 ```
 
-**Manual mode** — You write the task list yourself, then spawn agents:
-```bash
-torc team init <project-path>              # creates empty task list
-# edit tasks manually, then:
-torc team spawn <team-name> <n>            # spawn N agents
-```
-
 If unsure, recommend self-organizing mode — the Lead will generate tasks from your spec.
 
 ### Step 5: Deploy & Monitor
@@ -101,15 +94,6 @@ tmux attach -t torc-[project-name]
 # Watch the Orchestrator and PL coordinate
 ```
 
-**Manual mode:**
-```bash
-# After init, edit tasks, then spawn agents
-torc tasks edit [team-name]          # edit task list
-torc team spawn [team-name] 3        # spawn 3 agents
-
-torc team monitor [team-name]
-```
-
 ## Key Rules
 
 - Be conversational — don't ask for everything at once
@@ -117,6 +101,15 @@ torc team monitor [team-name]
 - Keep spec brief (1 page max)
 - After deployment, step back — let the team work
 - Recommend `torc team monitor` so the user can observe without interrupting
+
+## Edge Cases
+
+If the user explicitly wants to write their own task list (rare):
+```bash
+torc team init <project-path>    # creates empty task template
+torc tasks edit <team-name>      # edit manually
+torc team spawn <team-name> 3   # spawn agents
+```
 
 ## User's Project
 
