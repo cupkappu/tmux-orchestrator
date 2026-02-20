@@ -60,10 +60,16 @@ Create a spec file at `~/.tmux-orchestrator/specs/[project-name].md`:
 
 Ask the user which deployment mode they want:
 
-**Self-organizing** (recommended) — agents claim tasks from a shared pool, Lead approves plans, push notifications keep everyone in sync:
+**Self-organizing with AI task generation** (recommended) — Lead breaks spec into tasks, agents claim from shared pool:
 ```bash
 torc team deploy <project-path> --spec <spec-file> \
   --lead-cli kimi --teammate-cli opencode --teammates 3
+```
+
+**Self-organizing with manual tasks** — You create tasks yourself, then spawn agents:
+```bash
+torc team init <project-path>              # creates empty task list
+torc team spawn <team-name> <n>            # spawn N agents
 ```
 
 **Hierarchy** — Orchestrator manages a Project Leader who manages Executors:
@@ -71,11 +77,11 @@ torc team deploy <project-path> --spec <spec-file> \
 torc deploy <project-path> --spec <spec-file>
 ```
 
-If unsure, recommend self-organizing.
+If unsure, recommend self-organizing with AI task generation.
 
 ### Step 5: Deploy & Monitor
 
-After deploying in self-organizing mode, show the user how to watch progress:
+**If using self-organizing with AI tasks:**
 ```bash
 # Live event stream (all agent activity)
 torc team monitor [project-name]
@@ -87,7 +93,18 @@ torc team status [project-name]
 tmux attach -t torc-[project-name]
 ```
 
-For hierarchy mode:
+**If using self-organizing with manual tasks:**
+```bash
+# Edit tasks, then spawn agents
+torc tasks edit [team-name]          # edit task list
+torc team spawn [team-name] 3        # spawn 3 agents
+
+# Monitor progress
+torc team status [team-name]
+torc team monitor [team-name]
+```
+
+**For hierarchy mode:**
 ```bash
 tmux attach -t torc-[project-name]
 ```
