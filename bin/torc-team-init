@@ -1,9 +1,9 @@
 #!/bin/bash
-# torc-team-init - Create a self-organizing agent team with a task list
-# Usage: torc team init <project-path> [--spec <file>] [--name <team-name>]
+# torc-team-init - Create a self-organizing agent team with an empty task list
+# Usage: torc team init <project-path> [--name <team-name>]
 #
-# With --spec: calls claude one-shot to break the spec into tasks
-# Without --spec: writes an empty tasks template for manual editing
+# Creates team state + empty task template for manual editing.
+# For AI-generated task lists, use: torc team deploy (Lead generates tasks)
 
 set -euo pipefail
 TORC_BIN="$(cd "$(dirname "$0")" && pwd)"
@@ -16,23 +16,22 @@ usage() {
 Usage: torc team init <project-path> [options]
 
 Options:
-  --spec <file>   Spec/requirements file for AI-assisted task breakdown
   --name <name>   Override team name (default: project directory name)
 
 Examples:
-  torc team init ~/projects/my-app --spec ~/plan.md
-  torc team init ~/projects/my-app          # opens empty template
+  torc team init ~/projects/my-app
+  torc team init ~/projects/my-app --name my-team
+
+For AI-generated task lists, use: torc team deploy
 EOF
 }
 
 PROJECT_PATH=""
-SPEC_FILE=""
 TEAM_NAME_OVERRIDE=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
         -h|--help)   usage; exit 0 ;;
-        --spec)      SPEC_FILE="$2"; shift 2 ;;
         --name)      TEAM_NAME_OVERRIDE="$2"; shift 2 ;;
         -*)          echo "Unknown option: $1" >&2; exit 1 ;;
         *)           PROJECT_PATH="$1"; shift ;;
@@ -49,11 +48,6 @@ PROJECT_PATH="$(cd "$PROJECT_PATH" && pwd)"
 
 if ! git -C "$PROJECT_PATH" rev-parse --git-dir >/dev/null 2>&1; then
     echo "Error: $PROJECT_PATH is not a git repository" >&2
-    exit 1
-fi
-
-if [ -n "$SPEC_FILE" ] && [ ! -f "$SPEC_FILE" ]; then
-    echo "Error: spec file not found: $SPEC_FILE" >&2
     exit 1
 fi
 
@@ -86,91 +80,7 @@ write_team_state "$TEAM_NAME" "$STATE_JSON"
 
 TASKS_FILE="$(tasks_file "$TEAM_NAME")"
 
-if [ -n "$SPEC_FILE" ]; then
-    SPEC_CONTENT=$(cat "$SPEC_FILE")
-
-    echo "Generating task list from spec (calling Claude)..."
-    echo ""
-
-    PROMPT="You are a task planner for a self-organizing agent team.
-Break this project spec into concrete parallel tasks.
-
-Output ONLY valid JSON (no markdown, no explanation) matching this schema exactly:
-{
-  \"team\": \"TEAM_NAME\",
-  \"version\": 1,
-  \"tasks\": [
-    {
-      \"id\": \"T-001\",
-      \"title\": \"Short imperative title\",
-      \"description\": \"What to do. Which files to touch. Any constraints.\",
-      \"blocked_by\": [],
-      \"require_plan\": false
-    }
-  ]
-}
-
-Rules:
-- Replace TEAM_NAME with: $TEAM_NAME
-- Each task must be completable by one agent in isolation
-- Each task description must list the specific files/dirs it touches
-- No two tasks should touch the same files
-- Tasks that depend on others must list prerequisite IDs in blocked_by
-- Set require_plan: true for tasks that touch shared interfaces or are architectural
-- Aim for 3-8 tasks total
-
-SPEC:
-$SPEC_CONTENT"
-
-    RAW=$(claude -p "$PROMPT" 2>/dev/null) || {
-        echo "Warning: claude returned an error. Creating empty template." >&2
-        RAW=""
-    }
-
-    TASKS_JSON=$(python3 - "$TEAM_NAME" "$CREATED_AT" <<EOF
-import json, sys, re
-
-team_name   = sys.argv[1]
-created_at  = sys.argv[2]
-raw         = """$RAW"""
-
-raw = re.sub(r'^\s*\`\`\`(?:json)?\s*', '', raw, flags=re.MULTILINE)
-raw = re.sub(r'\`\`\`\s*$', '', raw, flags=re.MULTILINE)
-
-match = re.search(r'\{[\s\S]*\}', raw)
-if not match:
-    sys.exit(1)
-
-try:
-    data = json.loads(match.group())
-except json.JSONDecodeError as e:
-    print(f"JSON parse error: {e}", file=sys.stderr)
-    sys.exit(1)
-
-runtime = {
-    "status": "pending", "owner": None,
-    "plan": None, "plan_status": None, "plan_feedback": None,
-    "created_at": created_at,
-    "claimed_at": None, "plan_submitted_at": None,
-    "plan_decided_at": None, "started_at": None,
-    "done_at": None, "result": None
-}
-for t in data.get("tasks", []):
-    for k, v in runtime.items():
-        t.setdefault(k, v)
-
-print(json.dumps(data, indent=2))
-EOF
-    ) || TASKS_JSON=""
-
-    if [ -z "$TASKS_JSON" ]; then
-        echo "Warning: could not parse Claude's output. Creating empty template." >&2
-        SPEC_FILE=""
-    fi
-fi
-
-if [ -z "$SPEC_FILE" ]; then
-    TASKS_JSON=$(python3 -c "
+TASKS_JSON=$(python3 -c "
 import json
 print(json.dumps({
     'team': '$TEAM_NAME',
@@ -198,7 +108,6 @@ print(json.dumps({
     ]
 }, indent=2))
 ")
-fi
 
 echo "$TASKS_JSON" > "$TASKS_FILE"
 
@@ -212,11 +121,9 @@ echo "Task list:"
 tasks_list "$TEAM_NAME"
 echo ""
 
-if [ -n "$SPEC_FILE" ]; then
-    echo "Review the tasks above. Edit $TASKS_FILE if needed, then:"
-else
-    echo "Edit $TASKS_FILE to define your tasks, then:"
-fi
+echo "Edit $TASKS_FILE to define your tasks, then:"
 echo ""
 echo "  torc team spawn $TEAM_NAME <n>    # spawn N agents"
 echo "  torc team status $TEAM_NAME       # monitor progress"
+echo ""
+echo "Or use 'torc team deploy' instead for AI-generated task lists."
