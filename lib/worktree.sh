@@ -29,10 +29,11 @@ worktree_create() {
 
     # Create worktree from base branch if provided, otherwise from HEAD
     if [ -n "$base_branch" ]; then
-        git -C "$project" worktree add "$wt_path" -b "$branch" "$base_branch" 2>&1
+        git -C "$project" worktree add "$wt_path" -b "$branch" "$base_branch" >&2 || return 1
     else
-        git -C "$project" worktree add "$wt_path" -b "$branch" 2>&1
+        git -C "$project" worktree add "$wt_path" -b "$branch" >&2 || return 1
     fi
+    [ -d "$wt_path" ] || { echo "worktree_create: directory not created: $wt_path" >&2; return 1; }
     echo "$wt_path"
 }
 

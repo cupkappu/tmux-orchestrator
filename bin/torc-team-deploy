@@ -181,7 +181,7 @@ PYEOF
 
 # Start Lead agent
 tmux send-keys -t "$SESSION:Lead" "cd '$LEAD_WT' && $LEAD_CLI" Enter
-sleep 2
+sleep 8   # wait for CLI to fully load before sending briefing
 
 echo "  ✓ Lead started"
 

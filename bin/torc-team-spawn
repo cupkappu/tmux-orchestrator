@@ -156,7 +156,7 @@ EOF
     
     echo "    Starting $CLI_CMD..."
     tmux send-keys -t "$TARGET" "cd '$WT_PATH' && $CLI_CMD" Enter
-    sleep 2
+    sleep 8   # wait for CLI to fully load before sending briefing
     
     BRIEFING="=== AGENT BRIEFING ===
 You are Agent-$i in team '$TEAM_NAME'.

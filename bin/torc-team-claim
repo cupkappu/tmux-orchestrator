@@ -8,6 +8,7 @@
 set -euo pipefail
 TORC_BIN="$(cd "$(dirname "$0")" && pwd)"
 source "$TORC_BIN/../lib/config.sh"
+source "$TORC_BIN/../lib/state.sh"
 source "$TORC_BIN/../lib/tasks.sh"
 
 TEAM_NAME="${1:-}"

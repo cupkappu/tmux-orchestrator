@@ -1,0 +1,108 @@
+#!/bin/bash
+# torc-team-monitor - Open a live event-stream window for a team
+# Usage: torc team monitor <team-name>
+#
+# Creates (or reuses) a "Monitor" tmux window in the team's session that
+# tail -f's the event log. Shows all agent activity in real-time:
+#   - task claims, plan submissions, approvals, rejections, completions
+#
+# If no session is running, just prints the recent event log instead.
+
+set -euo pipefail
+TORC_BIN="$(cd "$(dirname "$0")" && pwd)"
+source "$TORC_BIN/../lib/config.sh"
+source "$TORC_BIN/../lib/state.sh"
+
+usage() {
+    cat <<'EOF'
+Usage: torc team monitor <team-name>
+
+Open a live event-stream window in the team's tmux session.
+Press Ctrl-C inside the Monitor window to stop tailing.
+
+Options:
+  --tail <n>   Print last N lines of existing log and exit (no tmux)
+
+Examples:
+  torc team monitor my-app
+  torc team monitor my-app --tail 50
+EOF
+}
+
+if [ $# -lt 1 ] || [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+    usage
+    exit 0
+fi
+
+TEAM_NAME="$1"
+shift
+TAIL_LINES=""
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --tail) TAIL_LINES="$2"; shift 2 ;;
+        *) echo "Unknown option: $1" >&2; exit 1 ;;
+    esac
+done
+
+if ! team_exists "$TEAM_NAME"; then
+    echo "Error: team '$TEAM_NAME' not found" >&2
+    exit 1
+fi
+
+EVENTS_FILE="$TORC_STATE_DIR/tasks/${TEAM_NAME}.events"
+
+# ── Tail-only mode (no tmux) ──────────────────────────────────────────────────
+if [ -n "$TAIL_LINES" ]; then
+    if [ ! -f "$EVENTS_FILE" ]; then
+        echo "(no events yet for team '$TEAM_NAME')"
+    else
+        echo "=== Last $TAIL_LINES events for $TEAM_NAME ==="
+        tail -n "$TAIL_LINES" "$EVENTS_FILE"
+    fi
+    exit 0
+fi
+
+# ── Tmux live-monitor mode ─────────────────────────────────────────────────────
+SESSION=$(team_field "$TEAM_NAME" "session" 2>/dev/null)
+if [ -z "$SESSION" ]; then
+    echo "Error: could not read session from team state" >&2
+    exit 1
+fi
+
+if ! tmux has-session -t "$SESSION" 2>/dev/null; then
+    echo "Session '$SESSION' is not running."
+    echo "Showing existing log instead (use --tail <n> for a specific count):"
+    echo ""
+    if [ -f "$EVENTS_FILE" ]; then
+        cat "$EVENTS_FILE"
+    else
+        echo "(no events yet)"
+    fi
+    exit 0
+fi
+
+# Ensure the events file exists so tail -f doesn't error immediately
+mkdir -p "$(dirname "$EVENTS_FILE")"
+touch "$EVENTS_FILE"
+
+MONITOR_WINDOW="Monitor"
+
+if tmux has-session -t "$SESSION:$MONITOR_WINDOW" 2>/dev/null; then
+    echo "Monitor window already open. Switching to it."
+    tmux select-window -t "$SESSION:$MONITOR_WINDOW"
+else
+    echo "Opening Monitor window in session '$SESSION'..."
+    tmux new-window -t "$SESSION" -n "$MONITOR_WINDOW"
+    sleep 0.3
+    # Send the tail command into the new window
+    tmux send-keys -t "$SESSION:$MONITOR_WINDOW" \
+        "echo '=== Live event stream: $TEAM_NAME ===' && tail -f '$EVENTS_FILE'" \
+        Enter
+    echo "✓ Monitor window opened: $SESSION:$MONITOR_WINDOW"
+fi
+
+echo ""
+echo "Attach and switch to the Monitor window:"
+echo "  tmux attach -t $SESSION"
+echo "  (then Shift+arrow or window number to navigate)"

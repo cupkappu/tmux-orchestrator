@@ -30,11 +30,15 @@ Commands:
   done <team> <task> [<result>]     Agent: mark done
   status <team> [--task <id>]       Show status
   broadcast <team> <msg>            Message all agents
+  inbox <team> <agent>              Read & clear agent inbox
+  monitor <team> [--tail <n>]       Live event-stream window
 
 Examples:
   torc team init ~/my-app --spec plan.md
   torc team spawn my-app 3
   torc team status my-app
+  torc team monitor my-app           # open live event stream
+  torc team inbox my-app Agent-1     # check pushed notifications
 EOF
 }
 
@@ -47,7 +51,7 @@ COMMAND="${1:-}"
 shift
 
 case "$COMMAND" in
-    init|spawn|claim|plan-submit|approve|reject|done|status|broadcast)
+    init|spawn|claim|plan-submit|approve|reject|done|status|broadcast|inbox|monitor)
         if [ -x "$TORC_BIN/torc-team-$COMMAND" ]; then
             "$TORC_BIN/torc-team-$COMMAND" "$@"
         else

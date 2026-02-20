@@ -1,0 +1,41 @@
+#!/bin/bash
+# torc-team-inbox - Read and clear an agent's push-notification inbox
+# Usage: torc team inbox <team-name> <agent-id>
+#
+# Called by agents at the start of each work loop to receive notifications
+# pushed by the Lead (plan approvals/rejections) or other agents.
+# Prints any pending messages, then clears the inbox.
+
+set -euo pipefail
+TORC_BIN="$(cd "$(dirname "$0")" && pwd)"
+source "$TORC_BIN/../lib/config.sh"
+source "$TORC_BIN/../lib/state.sh"
+source "$TORC_BIN/../lib/notify.sh"
+
+usage() {
+    cat <<'EOF'
+Usage: torc team inbox <team-name> <agent-id>
+
+Print and clear push notifications for the given agent.
+Agents should call this at the start of each work-loop iteration.
+
+Examples:
+  torc team inbox my-app Agent-1
+  torc team inbox my-app lead
+EOF
+}
+
+if [ $# -lt 2 ] || [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+    usage
+    exit 0
+fi
+
+TEAM_NAME="$1"
+AGENT_ID="$2"
+
+if ! team_exists "$TEAM_NAME"; then
+    echo "Error: team '$TEAM_NAME' not found" >&2
+    exit 1
+fi
+
+notify_inbox_read_clear "$TEAM_NAME" "$AGENT_ID"

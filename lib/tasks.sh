@@ -1,10 +1,20 @@
 #!/bin/bash
 # Task management for self-organizing agent teams
-# Source after config.sh: source "$TORC_BIN/../lib/tasks.sh"
+# Source after config.sh + state.sh: source "$TORC_BIN/../lib/tasks.sh"
 #
 # File layout:
-#   ~/.tmux-orchestrator/tasks/<team>.json   task list
-#   ~/.tmux-orchestrator/tasks/<team>.lock   flock lock file
+#   ~/.tmux-orchestrator/tasks/<team>.json        task list
+#   ~/.tmux-orchestrator/tasks/<team>.lock        flock lock file
+#   ~/.tmux-orchestrator/tasks/<team>.events      push event log (notify.sh)
+#   ~/.tmux-orchestrator/tasks/<team>-inbox-*.txt per-agent inboxes (notify.sh)
+
+# Auto-source push notification library (requires state.sh already loaded)
+_TASKS_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -f "$_TASKS_LIB_DIR/notify.sh" ]; then
+    # shellcheck source=lib/notify.sh
+    source "$_TASKS_LIB_DIR/notify.sh"
+fi
+unset _TASKS_LIB_DIR
 
 # ── Path helpers ──────────────────────────────────────────────────────────────
 
@@ -113,7 +123,8 @@ tasks_claim() {
     file="$(tasks_file "$team")"
     lock="$(tasks_lock_file "$team")"
 
-    python3 - "$file" "$owner" "$lock" <<'EOF'
+    local _claim_result
+    _claim_result=$(python3 - "$file" "$owner" "$lock" <<'EOF'
 import json, sys, fcntl, datetime
 
 tasks_file, owner, lock_path = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -137,6 +148,15 @@ with open(lock_path, 'w') as lock_f:
             sys.exit(0)
     sys.exit(1)
 EOF
+    ) || return 1
+
+    echo "$_claim_result"
+
+    # Push: notify lead that an agent claimed a task
+    ( _id=$(printf '%s' "$_claim_result" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["id"])' 2>/dev/null)
+      _title=$(printf '%s' "$_claim_result" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("title",""))' 2>/dev/null)
+      [ -n "$_id" ] && notify_push "$team" "$owner" "claimed" "$_id" "$_title" "lead"
+    ) 2>/dev/null || true
 }
 
 # tasks_submit_plan <team> <task-id> <plan-text>
@@ -169,6 +189,12 @@ with open(lock_path, 'w') as lock_f:
     print(f"Task {task_id} not found", file=sys.stderr)
     sys.exit(1)
 EOF
+
+    # Push: notify lead that a plan is waiting for approval
+    ( _owner=$(tasks_get "$team" "$task_id" 2>/dev/null \
+        | python3 -c 'import json,sys; print(json.load(sys.stdin).get("owner",""))' 2>/dev/null)
+      notify_push "$team" "${_owner:-agent}" "plan_submitted" "$task_id" "plan ready for review" "lead"
+    ) 2>/dev/null || true
 }
 
 # tasks_approve_plan <team> <task-id>
@@ -179,7 +205,8 @@ tasks_approve_plan() {
     file="$(tasks_file "$team")"
     lock="$(tasks_lock_file "$team")"
 
-    python3 - "$file" "$task_id" "$lock" <<'EOF'
+    local _approve_result
+    _approve_result=$(python3 - "$file" "$task_id" "$lock" <<'EOF'
 import json, sys, fcntl, datetime
 
 tasks_file, task_id, lock_path = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -205,6 +232,15 @@ with open(lock_path, 'w') as lock_f:
     print(f"Task {task_id} not found", file=sys.stderr)
     sys.exit(1)
 EOF
+    ) || return 1
+
+    echo "$_approve_result"
+
+    # Push: notify the agent whose plan was approved
+    ( _owner=$(printf '%s' "$_approve_result" \
+        | python3 -c 'import json,sys; print(json.load(sys.stdin).get("owner",""))' 2>/dev/null)
+      [ -n "$_owner" ] && notify_push "$team" "lead" "plan_approved" "$task_id" "approved" "$_owner"
+    ) 2>/dev/null || true
 }
 
 # tasks_reject_plan <team> <task-id> <feedback>
@@ -237,6 +273,12 @@ with open(lock_path, 'w') as lock_f:
     print(f"Task {task_id} not found", file=sys.stderr)
     sys.exit(1)
 EOF
+
+    # Push: notify the agent whose plan was rejected (with feedback)
+    ( _owner=$(tasks_get "$team" "$task_id" 2>/dev/null \
+        | python3 -c 'import json,sys; print(json.load(sys.stdin).get("owner",""))' 2>/dev/null)
+      [ -n "$_owner" ] && notify_push "$team" "lead" "plan_rejected" "$task_id" "$feedback" "$_owner"
+    ) 2>/dev/null || true
 }
 
 # tasks_done <team> <task-id> [result-text]
@@ -270,4 +312,11 @@ with open(lock_path, 'w') as lock_f:
     print(f"Task {task_id} not found", file=sys.stderr)
     sys.exit(1)
 EOF
+
+    # Push: notify lead of completion (read owner from updated task)
+    ( _owner=$(tasks_get "$team" "$task_id" 2>/dev/null \
+        | python3 -c 'import json,sys; print(json.load(sys.stdin).get("owner",""))' 2>/dev/null)
+      _from="${_owner:-agent}"
+      notify_push "$team" "$_from" "done" "$task_id" "$result" "lead"
+    ) 2>/dev/null || true
 }
