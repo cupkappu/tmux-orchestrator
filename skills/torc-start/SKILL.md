@@ -60,53 +60,54 @@ Create a spec file at `~/.tmux-orchestrator/specs/[project-name].md`:
 
 Ask the user which deployment mode they want:
 
-**Self-organizing with AI task generation** (recommended) — Lead breaks spec into tasks, agents claim from shared pool:
+**Self-organizing** (recommended) — Lead reads spec, breaks it into tasks, agents claim from shared pool:
 ```bash
 torc team deploy <project-path> --spec <spec-file> \
   --lead-cli kimi --teammate-cli opencode --teammates 3
 ```
 
-**Self-organizing with manual tasks** — You create tasks yourself, then spawn agents:
-```bash
-torc team init <project-path>              # creates empty task list
-torc team spawn <team-name> <n>            # spawn N agents
-```
-
-**Hierarchy** — Orchestrator manages a Project Leader who manages Executors:
+**Hierarchy** — Orchestrator creates a Project Leader who plans and manages Executors:
 ```bash
 torc deploy <project-path> --spec <spec-file>
 ```
 
-If unsure, recommend self-organizing with AI task generation.
+**Manual mode** — You write the task list yourself, then spawn agents:
+```bash
+torc team init <project-path>              # creates empty task list
+# edit tasks manually, then:
+torc team spawn <team-name> <n>            # spawn N agents
+```
+
+If unsure, recommend self-organizing mode — the Lead will generate tasks from your spec.
 
 ### Step 5: Deploy & Monitor
 
-**If using self-organizing with AI tasks:**
+**Self-organizing mode:**
 ```bash
-# Live event stream (all agent activity)
+# The Lead will read the spec and generate tasks automatically
+# Watch the live event stream (all agent activity)
 torc team monitor [project-name]
 
-# Full status
+# Or check full status
 torc team status [project-name]
 
 # Attach to tmux session directly
 tmux attach -t torc-[project-name]
 ```
 
-**If using self-organizing with manual tasks:**
+**Hierarchy mode:**
 ```bash
-# Edit tasks, then spawn agents
+tmux attach -t torc-[project-name]
+# Watch the Orchestrator and PL coordinate
+```
+
+**Manual mode:**
+```bash
+# After init, edit tasks, then spawn agents
 torc tasks edit [team-name]          # edit task list
 torc team spawn [team-name] 3        # spawn 3 agents
 
-# Monitor progress
-torc team status [team-name]
 torc team monitor [team-name]
-```
-
-**For hierarchy mode:**
-```bash
-tmux attach -t torc-[project-name]
 ```
 
 ## Key Rules
