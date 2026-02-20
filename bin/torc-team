@@ -21,7 +21,8 @@ usage() {
 Usage: torc team <command> [args]
 
 Commands:
-  init <project> [--spec <file>]     Create team with task list
+  init <project> [--name <name>]     Create team with empty task list
+  deploy <project> --spec <file>    Deploy self-organizing team (Lead+agents)
   spawn <team> <n> [--cli <tool>]   Spawn N agents
   claim <team> <agent>              Agent: claim next task
   plan-submit <team> <task> <plan>  Agent: submit plan
@@ -34,11 +35,11 @@ Commands:
   monitor <team> [--tail <n>]       Live event-stream window
 
 Examples:
-  torc team init ~/my-app --spec plan.md
-  torc team spawn my-app 3
+  torc team init ~/my-app            # create team with empty task list
+  torc team deploy ~/my-app --spec plan.md  # deploy with Lead + teammates
+  torc team spawn my-app 3           # spawn 3 agents
   torc team status my-app
   torc team monitor my-app           # open live event stream
-  torc team inbox my-app Agent-1     # check pushed notifications
 EOF
 }
 
@@ -51,7 +52,7 @@ COMMAND="${1:-}"
 shift
 
 case "$COMMAND" in
-    init|spawn|claim|plan-submit|approve|reject|done|status|broadcast|inbox|monitor)
+    init|deploy|spawn|claim|plan-submit|approve|reject|done|status|broadcast|inbox|monitor)
         if [ -x "$TORC_BIN/torc-team-$COMMAND" ]; then
             "$TORC_BIN/torc-team-$COMMAND" "$@"
         else
