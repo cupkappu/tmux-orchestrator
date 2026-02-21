@@ -25,6 +25,16 @@ If it shows `plan_rejected` → read the feedback and revise your plan (Step 3).
 
 ---
 
+### Step 0: Send Ready Signal (CRITICAL - DO FIRST)
+
+When you first start, you MUST notify Lead that you are ready BEFORE claiming tasks:
+
+```bash
+torc team msg {{team}} {{agent-id}} lead '{{agent-id}} READY. Starting work.'
+```
+
+Wait 5 seconds, then proceed to work loop.
+
 ### Step 1: Claim a Task
 
 ```bash
@@ -134,24 +144,67 @@ torc team inbox {{team}} {{agent-id}}
 # Check team status anytime
 torc team status {{team}}
 
-# Message Lead if stuck (use sparingly)
-torc send {{session}}:Lead "Need clarification on API design for T-003"
+# Message other agents
+torc team msg {{team}} {{agent-id}} lead "Need clarification on API design"
+torc team msg {{team}} {{agent-id}} Agent-1 "Can you share your component props?"
+torc team msg {{team}} {{agent-id}} broadcast "Design system ready, see src/components/"
 ```
+
+### Collaboration Guidelines
+
+**WHEN TO MESSAGE OTHER AGENTS:**
+
+1. **BEFORE starting work on interfaces:**
+   If your task touches shared components, message the owner:
+   ```bash
+   torc team msg {{team}} {{agent-id}} Agent-1 "Hi, I need to use your Button component. What props does it accept?"
+   ```
+
+2. **WHEN your task is blocked:**
+   ```bash
+   torc team msg {{team}} {{agent-id}} Agent-2 "My task T-003 needs T-001 to finish first. ETA on your task?"
+   ```
+
+3. **WHEN you finish a shared component:**
+   ```bash
+   torc team msg {{team}} {{agent-id}} broadcast "Design System complete. Components available: Button, Card, Nav. See src/components/"
+   ```
+
+4. **TO DISCUSS integration:**
+   ```bash
+   torc team msg {{team}} {{agent-id}} Agent-2 "For Contact form, I need to POST to /api/contact. Is API ready?"
+   ```
+
+**CHECK MESSAGES FREQUENTLY:**
+After each implementation step, check inbox:
+```bash
+torc team inbox {{team}} {{agent-id}}
+```
+
+Reply promptly to unblock teammates.
 
 ## Exit Conditions
 
-You can exit when:
+You MUST exit (type 'exit') when:
 1. `torc team claim` fails 3 times in a row (no more claimable tasks)
-2. All tasks show status `done`
-3. Lead tells you to stop
+2. Lead sends shutdown message
+3. All tasks are marked 'done' in `torc team status`
+
+DO NOT continue running when there's no work.
 
 ## START NOW
 
 ```bash
-# Check inbox first
+# Step 0: Send ready signal to Lead
+torc team msg {{team}} {{agent-id}} lead '{{agent-id}} READY. Starting work.'
+
+# Wait 5 seconds, then start work loop
+sleep 5
+
+# Step 1: Check inbox for notifications
 torc team inbox {{team}} {{agent-id}}
 
-# Then claim your first task
+# Step 2: Claim your first task
 torc team claim {{team}} {{agent-id}}
 ```
 

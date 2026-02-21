@@ -62,8 +62,8 @@ Ask the user which deployment mode they want:
 
 **Self-organizing** (recommended) — Lead reads spec, breaks it into tasks, agents claim from shared pool:
 ```bash
-torc team deploy <project-path> --spec <spec-file> \
-  --lead-cli kimi --teammate-cli opencode --teammates 3
+torc team deploy <project-path> --charter <spec-file> \
+  --lead-cli claude --teammate-cli kimi --teammates 3
 ```
 
 **Hierarchy** — Orchestrator creates a Project Leader who plans and manages Executors:
@@ -79,18 +79,18 @@ If unsure, recommend self-organizing mode — the Lead will generate tasks from 
 ```bash
 # The Lead will read the spec and generate tasks automatically
 # Watch the live event stream (all agent activity)
-torc team monitor [project-name]
+torc team monitor <team-name>
 
 # Or check full status
-torc team status [project-name]
+torc team status <team-name>
 
 # Attach to tmux session directly
-tmux attach -t torc-[project-name]
+tmux attach -t torc-<team-name>
 ```
 
 **Hierarchy mode:**
 ```bash
-tmux attach -t torc-[project-name]
+tmux attach -t torc-<team-name>
 # Watch the Orchestrator and PL coordinate
 ```
 

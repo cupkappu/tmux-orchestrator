@@ -34,15 +34,24 @@ torc team inbox {{team}} lead
 
 ## Workflow
 
-### Phase 1: Review Tasks (DO FIRST)
+### Phase 1: Read Charter (DO FIRST)
 
 ```bash
-cat ~/.tmux-orchestrator/tasks/{{team}}.json
-# or
-torc team status {{team}}
+cat {{project-path}}/CHARTER.md
 ```
 
-### Phase 2: Open Monitor Window
+### Phase 2: Generate Tasks Autonomously
+
+Based on the charter, create 6-10 concrete tasks using torc:
+
+```bash
+torc team propose {{team}} lead 'T1: Project Setup' 'Initialize Next.js with TypeScript, Tailwind'
+torc team propose {{team}} lead 'T2: Design System' 'Create pastel color palette and global styles'
+torc team propose {{team}} lead 'T3: Hero Section' 'Animated gradient, floating elements, typewriter'
+# ... more tasks
+```
+
+### Phase 3: Open Monitor Window
 
 Start the live event stream **before** spawning agents so you see all activity:
 
@@ -53,16 +62,21 @@ torc team monitor {{team}}
 This opens a `Monitor` window in the tmux session that shows every event as it
 happens (claims, plan submissions, completions). Keep it visible.
 
-### Phase 3: Spawn Agents
+### Phase 4: Spawn Agents (CRITICAL: USE TORC SPAWN)
+
+After creating ALL tasks, spawn agents using torc command:
 
 ```bash
-torc team spawn {{team}} 3 --cli opencode
+torc team spawn {{team}} 3 --cli kimi
 ```
+
+⚠️  WARNING: Use `torc team spawn` NOT Claude Task tool
+⚠️  Agents must be spawned via torc to integrate with task system
 
 Agents will automatically start claiming tasks. Each claim triggers a push
 notification to your inbox.
 
-### Phase 4: Process Inbox (primary loop)
+### Phase 5: Process Inbox (primary loop)
 
 After spawning, your main job is processing your inbox:
 
@@ -87,7 +101,7 @@ torc team reject {{team}} T-002 "Add error handling and tests"
 Approval/rejection automatically pushes a notification to the agent.
 **Respond to plan submissions quickly** — blocked agents waste time.
 
-### Phase 5: Passive Monitoring
+### Phase 6: Coordinate (Ongoing)
 
 Between inbox checks, the Monitor window shows all activity. You only need to
 act when agents need approvals or are stuck.
@@ -97,24 +111,27 @@ act when agents need approvals or are stuck.
 torc team broadcast {{team}} "Use port 3000 for the API server"
 
 # Message a specific agent
-torc send {{session}}:Agent-1 "Please focus on error handling first"
+torc team msg {{team}} lead agent-1 "Please focus on error handling first"
 ```
 
-### Phase 6: Final Review and Merge
+**FACILITATE communication:**
+- If agents conflict, mediate via messages
+- Broadcast decisions affecting all agents
+- Help unblock stuck agents
 
-When all tasks are done:
+### Phase 7: Shutdown (When ALL Tasks Done)
+
+When ALL tasks show status 'done':
 
 ```bash
-# Verify all tasks complete
-torc team status {{team}}
+# 1. Broadcast shutdown notice
+torc team msg {{team}} lead broadcast 'All tasks complete. Exit gracefully.'
 
-# Review the work
-git log --oneline
-git diff main
+# 2. Wait 15s
+sleep 15
 
-# Merge to main
-git checkout main
-git merge lead-$(date +%Y%m%d)
+# 3. Shutdown the team
+torc team shutdown {{team}}
 ```
 
 ---
@@ -126,6 +143,15 @@ git merge lead-$(date +%Y%m%d)
 3. **Watch the Monitor window** — real-time visibility without polling
 4. **Don't assign tasks** — agents self-claim from the pool
 5. **Focus on interfaces** — pay attention to plans for shared components
+
+## CRITICAL RULES
+
+- ✗ **NEVER use Claude Task tool** — use torc commands only
+- ✗ **NEVER approve work that deviates from the CHARTER**
+- ✓ Agents self-claim tasks — you don't assign
+- ✓ Reject immediately if proposal contradicts CHARTER
+- ✓ Approve plans that: include tests, <100 lines, don't break interfaces
+- ✓ **MUST shutdown team when ALL tasks done**
 
 ## Approval Criteria
 
@@ -155,7 +181,7 @@ torc team status {{team}}
 torc team monitor {{team}}
 
 # Message a specific agent
-torc send {{session}}:Agent-1 "Please focus on error handling"
+torc team msg {{team}} lead agent-1 "Please focus on error handling"
 
 # See recent events without tmux
 torc team monitor {{team}} --tail 30
@@ -165,8 +191,35 @@ torc team monitor {{team}} --tail 30
 
 ## START NOW
 
-1. Open monitor: `torc team monitor {{team}}`
-2. Review tasks: `torc team status {{team}}`
-3. Spawn agents: `torc team spawn {{team}} <n>`
-4. Check inbox: `torc team inbox {{team}} lead`
-5. Approve/reject plans as they arrive
+1. **Ensure torc is in PATH:**
+   ```bash
+   export PATH="/Users/kifuko/dev/Tmux-Orchestrator/bin:$PATH"
+   which torc  # Verify it works
+   ```
+
+2. **Read charter:**
+   ```bash
+   cat {{project-path}}/CHARTER.md
+   ```
+
+3. **Create task proposals** (6-10 tasks)
+
+4. **Open monitor:**
+   ```bash
+   torc team monitor {{team}}
+   ```
+
+5. **Spawn agents:**
+   ```bash
+   torc team spawn {{team}} <n>
+   ```
+
+6. **Coordinate until all done:**
+   - Check inbox: `torc team inbox {{team}} lead`
+   - Approve/reject plans as they arrive
+   - Facilitate communication between agents
+
+7. **Shutdown when complete:**
+   ```bash
+   torc team shutdown {{team}}
+   ```

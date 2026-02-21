@@ -17,9 +17,9 @@ Run this cycle continuously until the work is complete:
 
 ### 1. Check Executor Progress
 ```bash
-torc status <team-name>
+torc team status <team-name>
 ```
-See what each executor is doing (from their last output).
+See what each agent is doing (from their last output).
 
 ### 2. Check Git Progress
 For each executor, check their commits:
