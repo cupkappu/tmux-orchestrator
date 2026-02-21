@@ -16,11 +16,13 @@ usage() {
 Usage: torc team init <project-path> [options]
 
 Options:
-  --name <name>   Override team name (default: project directory name)
+  --name <name>       Override team name (default: project directory name)
+  --charter <file>    Project charter/requirements file (will be copied to project)
 
 Examples:
   torc team init ~/projects/my-app
   torc team init ~/projects/my-app --name my-team
+  torc team init ~/projects/my-app --charter ~/docs/requirements.md
 
 For AI-generated task lists, use: torc team deploy
 EOF
@@ -28,11 +30,13 @@ EOF
 
 PROJECT_PATH=""
 TEAM_NAME_OVERRIDE=""
+CHARTER_FILE=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
         -h|--help)   usage; exit 0 ;;
         --name)      TEAM_NAME_OVERRIDE="$2"; shift 2 ;;
+        --charter)   CHARTER_FILE="$2"; shift 2 ;;
         -*)          echo "Unknown option: $1" >&2; exit 1 ;;
         *)           PROJECT_PATH="$1"; shift ;;
     esac
@@ -55,15 +59,45 @@ TEAM_NAME="${TEAM_NAME_OVERRIDE:-$(basename "$PROJECT_PATH")}"
 SESSION="torc-$TEAM_NAME"
 
 if team_exists "$TEAM_NAME"; then
-    echo "Error: team '$TEAM_NAME' already exists." >&2
-    echo "  Run 'torc teardown $TEAM_NAME' to remove it first." >&2
-    exit 1
+    # Check if session is still running
+    if tmux_session_exists "$SESSION" 2>/dev/null; then
+        echo "Error: team '$TEAM_NAME' already exists and is running." >&2
+        echo "  Session: $SESSION" >&2
+        echo "  Attach:  tmux attach -t $SESSION" >&2
+        echo "  Or:      torc teardown $TEAM_NAME  # to remove completely" >&2
+        exit 1
+    else
+        # Session is gone but state remains - offer to resume
+        echo "Team '$TEAM_NAME' exists but session is not running." >&2
+        echo "" >&2
+        echo "Options:" >&2
+        echo "  1. Resume (recreate session, keep all state):" >&2
+        echo "     torc team resume $TEAM_NAME [--spawn-lead] [--spawn-agents <n>]" >&2
+        echo "" >&2
+        echo "  2. Teardown and start fresh:" >&2
+        echo "     torc teardown $TEAM_NAME" >&2
+        echo "     torc team init $PROJECT_PATH" >&2
+        exit 1
+    fi
 fi
 
 ensure_state_dirs
 ensure_tasks_dir
 
 CREATED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+# Handle charter file - copy to project so all agents can read it
+CHARTER_CONTENT=""
+if [ -n "$CHARTER_FILE" ] && [ -f "$CHARTER_FILE" ]; then
+    # Copy to project directory as CHARTER.md
+    cp "$CHARTER_FILE" "$PROJECT_PATH/CHARTER.md"
+    CHARTER_CONTENT=$(cat "$CHARTER_FILE" | sed 's/"/\\"/g')
+    echo "✓ Charter copied to $PROJECT_PATH/CHARTER.md"
+elif [ -f "$PROJECT_PATH/CHARTER.md" ]; then
+    # Charter already exists in project
+    CHARTER_CONTENT=$(cat "$PROJECT_PATH/CHARTER.md" | sed 's/"/\\"/g')
+    echo "✓ Found existing CHARTER.md"
+fi
 
 STATE_JSON=$(python3 -c "
 import json
@@ -80,50 +114,54 @@ write_team_state "$TEAM_NAME" "$STATE_JSON"
 
 TASKS_FILE="$(tasks_file "$TEAM_NAME")"
 
-TASKS_JSON=$(python3 -c "
+# Build tasks JSON with charter if provided
+if [ -n "$CHARTER_CONTENT" ]; then
+    TASKS_JSON=$(python3 -c "
+import json
+charter = '''$CHARTER_CONTENT'''
+print(json.dumps({
+    'team': '$TEAM_NAME',
+    'version': 1,
+    'charter': charter,
+    'tasks': [],
+    'proposals': []
+}, indent=2))
+")
+else
+    TASKS_JSON=$(python3 -c "
 import json
 print(json.dumps({
     'team': '$TEAM_NAME',
     'version': 1,
-    'tasks': [
-        {
-            'id': 'T-001',
-            'title': 'Example task',
-            'description': 'Describe what to do and which files to touch.',
-            'blocked_by': [],
-            'require_plan': False,
-            'status': 'pending',
-            'owner': None,
-            'plan': None,
-            'plan_status': None,
-            'plan_feedback': None,
-            'created_at': '$CREATED_AT',
-            'claimed_at': None,
-            'plan_submitted_at': None,
-            'plan_decided_at': None,
-            'started_at': None,
-            'done_at': None,
-            'result': None
-        }
-    ]
+    'tasks': [],
+    'proposals': []
 }, indent=2))
 ")
+fi
 
 echo "$TASKS_JSON" > "$TASKS_FILE"
 
 TASK_COUNT=$(python3 -c "import json; d=json.load(open('$TASKS_FILE')); print(len(d['tasks']))")
 
+TASK_COUNT=$(python3 -c "import json; d=json.load(open('$TASKS_FILE')); print(len(d.get('tasks', [])))")
+
 echo "Team '$TEAM_NAME' initialised"
 echo "  Project:   $PROJECT_PATH"
 echo "  Tasks:     $TASKS_FILE ($TASK_COUNT tasks)"
-echo ""
-echo "Task list:"
-tasks_list "$TEAM_NAME"
+[ -f "$PROJECT_PATH/CHARTER.md" ] && echo "  Charter:   $PROJECT_PATH/CHARTER.md"
 echo ""
 
-echo "Edit $TASKS_FILE to define your tasks, then:"
-echo ""
-echo "  torc team spawn $TEAM_NAME <n>    # spawn N agents"
-echo "  torc team status $TEAM_NAME       # monitor progress"
-echo ""
-echo "Or use 'torc team deploy' instead for AI-generated task lists."
+if [ -f "$PROJECT_PATH/CHARTER.md" ]; then
+    echo "✓ Charter loaded. Lead will read CHARTER.md and generate tasks automatically."
+    echo ""
+    echo "Next steps:"
+    echo "  torc team spawn-lead $TEAM_NAME     # spawn Lead (reads charter, creates tasks)"
+    echo "  torc team spawn $TEAM_NAME 3        # spawn 3 agents"
+else
+    echo "No charter found. Create CHARTER.md in project root or use --charter."
+    echo ""
+    echo "Next steps:"
+    echo "  torc team spawn-lead $TEAM_NAME     # spawn Lead"
+    echo "  torc team spawn $TEAM_NAME <n>      # spawn N agents"
+fi
+echo "  torc team status $TEAM_NAME          # monitor progress"

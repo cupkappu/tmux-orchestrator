@@ -83,11 +83,14 @@ notify_push() {
     # 3. Build human-readable push message
     local push_msg
     case "$event" in
-        claimed)         push_msg="⚡ [${from}] claimed ${task_id}" ;;
-        plan_submitted)  push_msg="📋 [${from}] plan ready ${task_id} — APPROVE NOW" ;;
-        plan_approved)   push_msg="✅ [lead] APPROVED ${task_id} — start work" ;;
-        plan_rejected)   push_msg="❌ [lead] REJECTED ${task_id}: ${detail}" ;;
-        done)            push_msg="✓ [${from}] DONE ${task_id}: ${detail}" ;;
+        claimed)           push_msg="⚡ [${from}] claimed ${task_id}" ;;
+        plan_submitted)    push_msg="📋 [${from}] plan ready ${task_id} — APPROVE NOW" ;;
+        plan_approved)     push_msg="✅ [lead] APPROVED ${task_id} — start work" ;;
+        plan_rejected)     push_msg="❌ [lead] REJECTED ${task_id}: ${detail}" ;;
+        done)              push_msg="✓ [${from}] DONE ${task_id}: ${detail}" ;;
+        proposal_submitted) push_msg="📨 [${from}] proposed new task: ${detail} — REVIEW" ;;
+        proposal_approved)  push_msg="✅ [lead] your proposal APPROVED as ${task_id}: ${detail}" ;;
+        proposal_rejected)  push_msg="❌ [lead] your proposal REJECTED: ${detail}" ;;
         *)               push_msg="[${from}] ${event} ${task_id}: ${detail}" ;;
     esac
 

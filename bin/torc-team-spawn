@@ -142,32 +142,110 @@ with open(state_file, 'w') as f:
 EOF
     
     TARGET="$SESSION:$WINDOW_NAME"
-    
+
+    # Get appropriate startup wait time for this CLI
+    STARTUP_WAIT=$(get_cli_startup_time "$CLI_TOOL")
+
     echo "    Starting $CLI_CMD..."
+    echo "    (waiting ${STARTUP_WAIT}s for CLI to load...)"
     tmux send-keys -t "$TARGET" "cd '$WT_PATH' && $CLI_CMD" Enter
-    sleep 8   # wait for CLI to fully load before sending briefing
-    
+    sleep "$STARTUP_WAIT"   # wait for CLI to fully load before sending briefing
+
     BRIEFING="=== AGENT BRIEFING ===
 You are Agent-$i in team '$TEAM_NAME'.
 Worktree: $WT_PATH
 
-YOUR WORKFLOW:
-1. Claim task: torc team claim $TEAM_NAME $WINDOW_NAME
-2. If require_plan=true: write plan → submit → wait approval
-3. Do work in $WT_PATH, commit changes
-4. Mark done: torc team done $TEAM_NAME <task-id> 'result'
-5. Repeat
+=== YOUR MISSION ===
+Work autonomously: claim tasks, submit plans, implement, repeat until all work is done.
 
-COMMANDS:
-- Claim: torc team claim $TEAM_NAME $WINDOW_NAME
-- Submit plan: torc team plan-submit $TEAM_NAME <task-id> 'plan'
-- Mark done: torc team done $TEAM_NAME <task-id> 'result'
-- Message: torc team msg $TEAM_NAME $WINDOW_NAME <to-agent> <msg>
-- Status: torc team status $TEAM_NAME
+=== SETUP ===
+export PATH=\"/Users/kifuko/dev/Tmux-Orchestrator/bin:\$PATH\"
+cd $WT_PATH
 
-EXIT: If claim fails 3 times → all tasks done → type 'exit'
+=== INITIALIZATION (DO FIRST) ===
 
-START NOW: torc team claim $TEAM_NAME $WINDOW_NAME"
+STEP 0: Send ready signal to Lead (CRITICAL)
+You MUST notify Lead that you are ready BEFORE claiming tasks:
+
+torc team msg $TEAM_NAME $WINDOW_NAME lead 'Agent-$i READY. Worktree: $WT_PATH'
+
+Wait 5 seconds, then proceed to work loop.
+
+=== WORK LOOP (REPEAT UNTIL ALL TASKS DONE) ===
+
+STEP 1: Check inbox for notifications
+torc team inbox $TEAM_NAME $WINDOW_NAME
+
+STEP 2: Claim next available task
+torc team claim $TEAM_NAME $WINDOW_NAME
+
+If claim FAILS (exit 1):
+  - Try 2 more times with 30s delay
+  - If still failing → ALL TASKS DONE → type 'exit' and STOP
+
+STEP 3: Check if plan is required
+torc team status $TEAM_NAME --task <task-id>
+
+If require_plan=true:
+  - Write specific plan (list files, approach, tests)
+  - torc team plan-submit $TEAM_NAME <task-id> 'Plan: 1. Create X, 2. Add Y, 3. Test Z'
+  - Wait for approval (check inbox every 30s)
+  - If rejected: revise plan and resubmit
+  - If approved: proceed to Step 4
+
+STEP 4: Implement the task
+- Work in $WT_PATH
+- Write code according to CHARTER (check $PROJECT_PATH/CHARTER.md if unclear)
+- Commit every 10-15 minutes: git add . && git commit -m '<task-id>: description'
+- Run tests if available
+
+STEP 5: Mark task done
+torc team done $TEAM_NAME <task-id> 'Completed: specific result'
+
+STEP 6: Go back to STEP 1
+
+=== COLLABORATION WITH TEAMMATES (IMPORTANT) ===
+
+You are NOT working alone. Coordinate with other agents actively.
+
+WHEN TO MESSAGE OTHER AGENTS:
+
+1. BEFORE starting work on interfaces:
+   If your task touches shared components (Button, Card, Nav), message the owner:
+   torc team msg $TEAM_NAME $WINDOW_NAME Agent-1 'Hi, I need to use your Button component. What props does it accept?'
+
+2. WHEN your task is blocked:
+   torc team msg $TEAM_NAME $WINDOW_NAME <owner> 'My task T-003 needs T-001 to finish first. ETA on your task?'
+
+3. WHEN you finish a shared component:
+   torc team msg $TEAM_NAME $WINDOW_NAME broadcast 'Design System complete. Components available: Button, Card, Nav. See src/components/'
+
+4. TO DISCUSS integration:
+   torc team msg $TEAM_NAME $WINDOW_NAME Agent-2 'For Contact form, I need to POST to /api/contact. Is API ready?'
+
+COMMUNICATION COMMANDS:
+- Message Lead:     torc team msg $TEAM_NAME $WINDOW_NAME lead 'need help with X'
+- Message Agent-1:  torc team msg $TEAM_NAME $WINDOW_NAME Agent-1 'question about Y'
+- Message Agent-2:  torc team msg $TEAM_NAME $WINDOW_NAME Agent-2 'update on Z'
+- Broadcast all:    torc team msg $TEAM_NAME $WINDOW_NAME broadcast 'announcement'
+
+CHECK MESSAGES FREQUENTLY:
+After each implementation step, check inbox:
+torc team inbox $TEAM_NAME $WINDOW_NAME
+
+Reply promptly to unblock teammates.
+
+=== AUTO-EXIT RULES ===
+YOU MUST EXIT (type 'exit') when:
+1. torc team claim fails 3 times in a row (no more claimable tasks)
+2. Lead sends shutdown message
+3. All tasks are marked 'done' in torc team status
+
+DO NOT continue running when there's no work.
+
+=== START NOW ===
+torc team inbox $TEAM_NAME $WINDOW_NAME
+torc team claim $TEAM_NAME $WINDOW_NAME"
     
     "$TORC_BIN/torc-send" "$TARGET" "$BRIEFING"
     

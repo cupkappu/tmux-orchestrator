@@ -1,0 +1,283 @@
+#!/bin/bash
+# torc-team-spawn-lead - Spawn a Lead for a self-organizing team
+# Usage: torc team spawn-lead <team-name> [--cli <cli-tool>]
+#
+# Creates Lead worktree + tmux window, starts CLI with briefing.
+
+set -euo pipefail
+TORC_BIN="$(cd "$(dirname "$0")" && pwd)"
+source "$TORC_BIN/../lib/config.sh"
+source "$TORC_BIN/../lib/state.sh"
+source "$TORC_BIN/../lib/tasks.sh"
+source "$TORC_BIN/../lib/worktree.sh"
+source "$TORC_BIN/../lib/tmux.sh"
+
+usage() {
+    cat <<'EOF'
+Usage: torc team spawn-lead <team-name> [options]
+
+Arguments:
+  team-name    Team to spawn Lead for
+
+Options:
+  --cli <tool> CLI tool to use (kimi, opencode, claude). Default: kimi
+
+Examples:
+  torc team spawn-lead my-app
+  torc team spawn-lead my-app --cli claude
+EOF
+}
+
+TEAM_NAME=""
+CLI_TOOL=$(get_selforg_default_cli "lead")
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -h|--help)   usage; exit 0 ;;
+        --cli)       CLI_TOOL="$2"; shift 2 ;;
+        -*)          echo "Unknown option: $1" >&2; exit 1 ;;
+        *)
+            if [ -z "$TEAM_NAME" ]; then
+                TEAM_NAME="$1"
+            else
+                echo "Error: too many arguments" >&2
+                exit 1
+            fi
+            shift
+            ;;
+    esac
+done
+
+if [ -z "$TEAM_NAME" ]; then
+    echo "Error: team name required" >&2
+    usage
+    exit 1
+fi
+
+if ! team_exists "$TEAM_NAME"; then
+    echo "Error: team '$TEAM_NAME' not found" >&2
+    echo "  Run 'torc team init <project>' first." >&2
+    exit 1
+fi
+
+PROJECT_PATH=$(team_field "$TEAM_NAME" "project_path")
+SESSION=$(team_field "$TEAM_NAME" "session")
+TASKS_FILE=$(tasks_file "$TEAM_NAME")
+
+if [ ! -f "$TASKS_FILE" ]; then
+    echo "Error: no task list found for team '$TEAM_NAME'" >&2
+    exit 1
+fi
+
+CLI_CMD=$(get_cli_start_command "$CLI_TOOL")
+
+echo "Spawning Lead for team '$TEAM_NAME'"
+echo "  Project: $PROJECT_PATH"
+echo "  Session: $SESSION"
+echo "  CLI: $CLI_TOOL"
+echo ""
+
+if ! tmux_session_exists "$SESSION"; then
+    echo "Creating tmux session '$SESSION'..."
+    tmux_create_session "$SESSION" "$PROJECT_PATH" "Team"
+    sleep 0.5
+    echo "  ✓ Session created"
+    echo ""
+fi
+
+AGENT_ID="lead"
+WINDOW_NAME="Lead"
+
+if tmux_window_exists "$SESSION:$WINDOW_NAME" 2>/dev/null; then
+    echo "⚠️ Lead already exists. Use 'torc send $SESSION:Lead <msg>' to communicate."
+    exit 0
+fi
+
+echo "Creating Lead..."
+
+WT_PATH=$(worktree_create "$PROJECT_PATH" "$AGENT_ID" 2>&1 | tail -1) || {
+    echo "  ✗ Failed to create worktree: $WT_PATH" >&2
+    exit 1
+}
+echo "  ✓ Worktree: $WT_PATH"
+
+tmux_create_window "$SESSION" "$WINDOW_NAME" "$WT_PATH"
+sleep 0.5
+echo "  ✓ Window: $SESSION:$WINDOW_NAME"
+
+python3 - "$TEAM_NAME" "$AGENT_ID" "$WINDOW_NAME" "$WT_PATH" "$CLI_TOOL" <<'EOF'
+import json, sys, os
+team_name, agent_id, window, worktree, cli = sys.argv[1:6]
+
+state_file = f"{os.path.expanduser('~')}/.tmux-orchestrator/state/teams/{team_name}.json"
+with open(state_file) as f:
+    data = json.load(f)
+
+if 'agents' not in data:
+    data['agents'] = {}
+
+data['agents'][agent_id] = {
+    'window': window,
+    'worktree': worktree,
+    'cli': cli,
+    'status': 'spawning',
+    'role': 'lead'
+}
+
+with open(state_file, 'w') as f:
+    json.dump(data, f, indent=2)
+EOF
+
+TARGET="$SESSION:$WINDOW_NAME"
+
+# Get appropriate startup wait time for this CLI
+STARTUP_WAIT=$(get_cli_startup_time "$CLI_TOOL")
+
+echo "    Starting $CLI_CMD..."
+echo "    (waiting ${STARTUP_WAIT}s for CLI to load...)"
+tmux send-keys -t "$TARGET" "cd '$WT_PATH' && $CLI_CMD" Enter
+sleep "$STARTUP_WAIT"
+
+BRIEFING="=== LEAD BRIEFING ===
+You are the Lead of team '$TEAM_NAME'.
+Worktree: $WT_PATH
+
+=== YOUR MISSION ===
+Coordinate the team autonomously: read CHARTER, create tasks, spawn agents, approve/reject work, shutdown when all tasks done.
+
+=== SETUP ===
+export PATH=\"/Users/kifuko/dev/Tmux-Orchestrator/bin:\$PATH\"
+cd $WT_PATH
+
+=== PHASE 1: INITIALIZE (DO ONCE) ===
+
+Step 1: Read charter
+cat $PROJECT_PATH/CHARTER.md
+
+Step 2: Create 6-10 tasks based on charter
+torc team propose $TEAM_NAME lead 'T1: Project Setup' 'Initialize Next.js with TypeScript, Tailwind'
+torc team propose $TEAM_NAME lead 'T2: Design System' 'Create pastel color palette, global styles'
+torc team propose $TEAM_NAME lead 'T3: Hero Section' 'Animated gradient, floating elements, typewriter'
+... (continue for all sections in CHARTER)
+
+Step 3: Spawn agents (WAIT for all proposals created first)
+torc team spawn $TEAM_NAME 3 --cli opencode
+
+Step 4: WAIT for all agents to report READY (CRITICAL)
+- Wait at least 60 seconds for agents to initialize
+- Check inbox until you receive 'Agent-1 READY', 'Agent-2 READY', 'Agent-3 READY'
+- DO NOT proceed until all agents report ready
+- If agent not ready after 2 minutes, message them: torc team msg $TEAM_NAME lead Agent-1 'Please send READY signal'
+
+=== PHASE 2: COORDINATE (ONGOING LOOP) ===
+
+At each iteration:
+
+1. Check inbox: torc team inbox $TEAM_NAME lead
+
+2. Check proposals: torc team proposals $TEAM_NAME
+
+3. For each plan_submitted:
+   - Review: torc team status $TEAM_NAME --task <id>
+   - Approve if good (has tests, specific files, <100 lines): torc team approve $TEAM_NAME <task-id>
+   - Reject if bad: torc team reject $TEAM_NAME <task-id> 'feedback'
+
+4. Approve/reject agent task proposals (if any) against CHARTER
+
+5. FACILITATE TEAM COMMUNICATION:
+   - Monitor for agents asking questions in inbox
+   - If agents conflict (e.g., both modifying same file), mediate:
+     torc team msg $TEAM_NAME lead Agent-1 'Coordinate with Agent-2 on shared component'
+   - Broadcast important decisions:
+     torc team msg $TEAM_NAME lead broadcast 'Decision: Use CSS variables for theming'
+   - If agent stuck, help or reassign:
+     torc team msg $TEAM_NAME lead Agent-1 'Stuck on T-003? Let me know if you need help'
+
+6. CHECK FOR BLOCKERS:
+   - If task blocked too long (>30min), check why:
+     torc team status $TEAM_NAME --task T-003
+   - If dependency issue, communicate between agents
+   - If skill issue, consider reassigning
+
+=== PHASE 3: MERGE WORK (DURING COORDINATION) ===
+
+When an agent marks a task 'done', merge their work immediately:
+
+1. Go to project: cd $PROJECT_PATH
+2. Checkout main: git checkout main
+3. Merge agent branch: git merge <agent-branch-name>
+4. If conflict:
+   - DO NOT fix it yourself
+   - Notify the agent: torc team msg $TEAM_NAME lead <agent> 'Merge conflict with main. Please resolve: cd your-worktree && git checkout main && git pull && git checkout your-branch && git merge main && fix conflicts && git commit && git push'
+   - Wait for agent to fix, then retry merge
+
+=== PHASE 4: FINAL MERGE (BEFORE SHUTDOWN) ===
+
+Before shutdown, ensure ALL agent work is merged:
+
+1. Check status: torc team status $TEAM_NAME
+2. List all agent branches: git branch -a | grep agent
+3. Merge each unmerged agent branch (handle conflicts as above)
+4. Verify: git log --oneline -10
+5. Push to main: git push origin main
+
+=== PHASE 5: SHUTDOWN (WHEN ALL DONE) ===
+
+When ALL tasks 'done' AND ALL branches merged:
+
+1. Broadcast: torc team msg $TEAM_NAME lead broadcast 'All tasks complete. Exit gracefully.'
+2. Wait 15s
+3. Shutdown: torc team shutdown $TEAM_NAME
+
+=== KEY RULES ===
+✗ NEVER use Claude Task tool - use torc commands only
+✗ NEVER approve work deviating from CHARTER
+✗ NEVER modify agent code yourself - only merge
+✗ NEVER implement tasks yourself - wait for agents even if slow
+✓ Agents self-claim tasks
+✓ Approve plans with: tests, specific files, <100 lines
+✓ Merge agent work continuously and at the end
+✓ MUST shutdown when all tasks done
+✓ MUST wait for all agents READY before proceeding
+
+=== PATIENCE PROTOCOL ===
+Agents (especially opencode) may take 1-2 minutes to start.
+DO NOT check worktrees and assume agents failed.
+DO NOT write code because agents "seem slow".
+ALWAYS wait for explicit READY messages from all agents.
+If unsure, wait longer. Patience > Speed.
+
+=== AUTO-SHUTDOWN TRIGGER ===
+Shutdown immediately when: ALL tasks status = 'done'
+
+=== COMMANDS ===
+torc team inbox $TEAM_NAME lead
+torc team proposals $TEAM_NAME
+torc team approve-proposal $TEAM_NAME <id>
+torc team reject-proposal $TEAM_NAME <id> 'reason'
+torc team approve $TEAM_NAME <task>
+torc team reject $TEAM_NAME <task> 'feedback'
+torc team status $TEAM_NAME
+torc team shutdown $TEAM_NAME
+
+=== START NOW ===
+1. export PATH="/Users/kifuko/dev/Tmux-Orchestrator/bin:$PATH"
+2. cat $PROJECT_PATH/CHARTER.md
+3. Create task proposals
+4. Spawn agents
+5. Coordinate + merge continuously
+6. Final merge all branches
+7. Shutdown the team"
+
+"$TORC_BIN/torc-send" "$TARGET" "$BRIEFING"
+
+echo "    ✓ Lead started with briefing"
+echo ""
+echo "=== Lead Spawn Complete ==="
+echo "Window: $SESSION:$WINDOW_NAME"
+echo ""
+echo "Next steps:"
+echo "  torc team status $TEAM_NAME       # review tasks"
+echo "  torc team proposals $TEAM_NAME    # review pending proposals"
+echo "  torc team spawn $TEAM_NAME 3      # spawn 3 agents"
+echo "  tmux attach -t $SESSION"

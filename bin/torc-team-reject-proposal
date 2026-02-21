@@ -1,0 +1,97 @@
+#!/bin/bash
+# torc-team-reject-proposal - Lead: reject a task proposal
+# Usage: torc team reject-proposal <team-name> <proposal-id> [reason]
+#
+# Rejects a pending proposal with optional feedback.
+
+set -euo pipefail
+TORC_BIN="$(cd "$(dirname "$0")" && pwd)"
+source "$TORC_BIN/../lib/config.sh"
+source "$TORC_BIN/../lib/state.sh"
+source "$TORC_BIN/../lib/tasks.sh"
+
+usage() {
+    cat <<'EOF'
+Usage: torc team reject-proposal <team-name> <proposal-id> [reason]
+
+Reject a pending task proposal with optional feedback to the proposer.
+
+Examples:
+  torc team reject-proposal my-app P-1234567890 "Too large, break into smaller tasks"
+  torc team reject-proposal my-app P-1234567890 "Duplicate of T-003"
+EOF
+}
+
+if [ $# -lt 2 ]; then
+    usage
+    exit 1
+fi
+
+TEAM_NAME="$1"
+PROPOSAL_ID="$2"
+shift 2
+REASON="${*:-No reason given}"
+
+if ! team_exists "$TEAM_NAME"; then
+    echo "Error: team '$TEAM_NAME' not found" >&2
+    exit 1
+fi
+
+TASKS_FILE="$(tasks_file "$TEAM_NAME")"
+LOCK_FILE="$(tasks_lock_file "$TEAM_NAME")"
+
+REJECTED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+# Reject proposal
+python3 - "$TASKS_FILE" "$LOCK_FILE" "$PROPOSAL_ID" "$REASON" "$REJECTED_AT" <<'EOF'
+import json, sys, fcntl
+
+tasks_file, lock_path, proposal_id, reason, rejected_at = sys.argv[1:6]
+
+with open(lock_path, 'w') as lock_f:
+    fcntl.flock(lock_f, fcntl.LOCK_EX)
+    with open(tasks_file) as f:
+        data = json.load(f)
+
+    # Find and update proposal
+    proposal = None
+    for p in data.get('proposals', []):
+        if p['id'] == proposal_id:
+            proposal = p
+            break
+
+    if not proposal:
+        print(f"Error: proposal {proposal_id} not found", file=sys.stderr)
+        sys.exit(1)
+
+    if proposal.get('status') != 'pending':
+        print(f"Error: proposal {proposal_id} is not pending (status: {proposal.get('status')})", file=sys.stderr)
+        sys.exit(1)
+
+    # Update proposal
+    proposal['status'] = 'rejected'
+    proposal['reason'] = reason
+    proposal['decided_at'] = rejected_at
+
+    with open(tasks_file, 'w') as f:
+        json.dump(data, f, indent=2)
+EOF
+
+echo "✗ Proposal $PROPOSAL_ID rejected"
+[ -n "$REASON" ] && echo "  Reason: $REASON"
+
+# Notify the agent who proposed
+python3 - "$TASKS_FILE" "$PROPOSAL_ID" <<'EOF'
+import json, sys
+with open(sys.argv[1]) as f:
+    data = json.load(f)
+for p in data.get('proposals', []):
+    if p['id'] == sys.argv[2]:
+        print(p['proposed_by'])
+        print(p['title'])
+        break
+EOF | {
+    read -r proposer
+    read -r title
+    [ -n "$proposer" ] && notify_push "$TEAM_NAME" "lead" "proposal_rejected" "$PROPOSAL_ID" "'$title' rejected: $REASON" "$proposer"
+}

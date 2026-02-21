@@ -1,0 +1,134 @@
+#!/bin/bash
+# torc-team-approve-proposal - Lead: approve a task proposal
+# Usage: torc team approve-proposal <team-name> <proposal-id>
+#
+# Approves a pending proposal, converting it to an official task.
+
+set -euo pipefail
+TORC_BIN="$(cd "$(dirname "$0")" && pwd)"
+source "$TORC_BIN/../lib/config.sh"
+source "$TORC_BIN/../lib/state.sh"
+source "$TORC_BIN/../lib/tasks.sh"
+
+usage() {
+    cat <<'EOF'
+Usage: torc team approve-proposal <team-name> <proposal-id>
+
+Approve a pending task proposal. It becomes an official task in the pool.
+
+Examples:
+  torc team approve-proposal my-app P-1234567890
+EOF
+}
+
+if [ $# -lt 2 ]; then
+    usage
+    exit 1
+fi
+
+TEAM_NAME="$1"
+PROPOSAL_ID="$2"
+
+if ! team_exists "$TEAM_NAME"; then
+    echo "Error: team '$TEAM_NAME' not found" >&2
+    exit 1
+fi
+
+TASKS_FILE="$(tasks_file "$TEAM_NAME")"
+LOCK_FILE="$(tasks_lock_file "$TEAM_NAME")"
+
+# Generate new task ID
+NEW_TASK_ID=$(python3 - "$TASKS_FILE" <<'EOF'
+import json, sys
+with open(sys.argv[1]) as f:
+    data = json.load(f)
+existing = {t['id'] for t in data.get('tasks', [])}
+i = 1
+while f"T-{i:03d}" in existing:
+    i += 1
+print(f"T-{i:03d}")
+EOF
+)
+
+APPROVED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+# Approve proposal and create task
+python3 - "$TASKS_FILE" "$LOCK_FILE" "$PROPOSAL_ID" "$NEW_TASK_ID" "$APPROVED_AT" <<'EOF'
+import json, sys, fcntl
+
+tasks_file, lock_path, proposal_id, new_task_id, approved_at = sys.argv[1:6]
+
+with open(lock_path, 'w') as lock_f:
+    fcntl.flock(lock_f, fcntl.LOCK_EX)
+    with open(tasks_file) as f:
+        data = json.load(f)
+
+    # Find and update proposal
+    proposal = None
+    for p in data.get('proposals', []):
+        if p['id'] == proposal_id:
+            proposal = p
+            break
+
+    if not proposal:
+        print(f"Error: proposal {proposal_id} not found", file=sys.stderr)
+        sys.exit(1)
+
+    if proposal.get('status') != 'pending':
+        print(f"Error: proposal {proposal_id} is not pending (status: {proposal.get('status')})", file=sys.stderr)
+        sys.exit(1)
+
+    # Update proposal
+    proposal['status'] = 'approved'
+    proposal['task_id'] = new_task_id
+    proposal['decided_at'] = approved_at
+
+    # Create new task
+    new_task = {
+        'id': new_task_id,
+        'title': proposal['title'],
+        'description': proposal['description'],
+        'blocked_by': [],
+        'require_plan': False,
+        'status': 'pending',
+        'owner': None,
+        'plan': None,
+        'plan_status': None,
+        'plan_feedback': None,
+        'created_at': approved_at,
+        'claimed_at': None,
+        'plan_submitted_at': None,
+        'plan_decided_at': None,
+        'started_at': None,
+        'done_at': None,
+        'result': None,
+        'proposed_by': proposal['proposed_by'],
+        'proposal_id': proposal_id
+    }
+
+    data['tasks'].append(new_task)
+
+    with open(tasks_file, 'w') as f:
+        json.dump(data, f, indent=2)
+
+    print(new_task_id)
+EOF
+
+echo "✓ Proposal $PROPOSAL_ID approved"
+echo "  Created task: $NEW_TASK_ID"
+
+# Notify the agent who proposed
+python3 - "$TASKS_FILE" "$PROPOSAL_ID" <<'EOF'
+import json, sys
+with open(sys.argv[1]) as f:
+    data = json.load(f)
+for p in data.get('proposals', []):
+    if p['id'] == sys.argv[2]:
+        print(p['proposed_by'])
+        print(p['title'])
+        break
+EOF | {
+    read -r proposer
+    read -r title
+    [ -n "$proposer" ] && notify_push "$TEAM_NAME" "lead" "proposal_approved" "$NEW_TASK_ID" "'$title' approved as $NEW_TASK_ID" "$proposer"
+}

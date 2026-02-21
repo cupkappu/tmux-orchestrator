@@ -61,13 +61,28 @@ fi
 
 # Check if team already exists
 if team_exists "$TEAM_NAME"; then
-    echo "Error: team '$TEAM_NAME' already exists. Use 'torc teardown $TEAM_NAME' first." >&2
+    if tmux_session_exists "$SESSION"; then
+        echo "Error: team '$TEAM_NAME' already exists and is running." >&2
+        echo "  Session: $SESSION" >&2
+        echo "  Attach:  tmux attach -t $SESSION" >&2
+        echo "  Or:      torc teardown $TEAM_NAME  # to remove completely" >&2
+    else
+        echo "Error: team '$TEAM_NAME' already exists but session is not running." >&2
+        echo "" >&2
+        echo "For self-organizing teams:" >&2
+        echo "  torc team resume $TEAM_NAME [--spawn-lead] [--spawn-agents <n>]" >&2
+        echo "" >&2
+        echo "Or teardown and start fresh:" >&2
+        echo "  torc teardown $TEAM_NAME" >&2
+    fi
     exit 1
 fi
 
-# Check if tmux session already exists
+# Check if tmux session already exists (but no team state)
 if tmux_session_exists "$SESSION"; then
     echo "Error: tmux session '$SESSION' already exists." >&2
+    echo "  Attach: tmux attach -t $SESSION" >&2
+    echo "  Or kill: tmux kill-session -t $SESSION" >&2
     exit 1
 fi
 

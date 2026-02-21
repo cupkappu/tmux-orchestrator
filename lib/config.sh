@@ -141,3 +141,17 @@ except Exception:
     print('claude: Claude Code (claude)')
 " 2>/dev/null
 }
+
+# Get startup wait time for a CLI tool (in seconds)
+# Usage: get_cli_startup_time <tool-name>
+# Returns: seconds to wait for CLI to fully load
+get_cli_startup_time() {
+    local tool_name="$1"
+    # Default wait times by tool
+    case "$tool_name" in
+        opencode) echo "30" ;;
+        kimi)     echo "10" ;;
+        claude)   echo "8"  ;;
+        *)        echo "15" ;;  # default for unknown tools
+    esac
+}

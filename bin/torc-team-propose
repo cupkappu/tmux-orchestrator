@@ -1,0 +1,94 @@
+#!/bin/bash
+# torc-team-propose - Agent: propose a new task for Lead approval
+# Usage: torc team propose <team-name> <agent-id> <title> <description>
+#
+# Submits a new task proposal to the Lead. If approved, it enters the task pool.
+
+set -euo pipefail
+TORC_BIN="$(cd "$(dirname "$0")" && pwd)"
+source "$TORC_BIN/../lib/config.sh"
+source "$TORC_BIN/../lib/state.sh"
+source "$TORC_BIN/../lib/tasks.sh"
+
+usage() {
+    cat <<'EOF'
+Usage: torc team propose <team-name> <agent-id> <title> <description>
+
+Propose a new task for Lead approval.
+
+Arguments:
+  team-name     Team name
+  agent-id      Your agent ID (e.g., "Agent-1", "lead")
+  title         Task title (short)
+  description   Task description (what to do, which files, etc.)
+
+Examples:
+  torc team propose my-app Agent-1 "Add JWT auth" "Implement login/logout endpoints"
+  torc team propose my-app lead "Setup CI" "Configure GitHub Actions for testing"
+EOF
+}
+
+if [ $# -lt 4 ]; then
+    usage
+    exit 1
+fi
+
+TEAM_NAME="$1"
+AGENT_ID="$2"
+TITLE="$3"
+shift 3
+DESCRIPTION="$*"
+
+if ! team_exists "$TEAM_NAME"; then
+    echo "Error: team '$TEAM_NAME' not found" >&2
+    exit 1
+fi
+
+TASKS_FILE="$(tasks_file "$TEAM_NAME")"
+if [ ! -f "$TASKS_FILE" ]; then
+    echo "Error: no task list for team '$TEAM_NAME'" >&2
+    exit 1
+fi
+
+# Generate proposal ID
+PROPOSAL_ID="P-$(date +%s%N | cut -c1-10)"
+LOCK_FILE="$(tasks_lock_file "$TEAM_NAME")"
+PROPOSED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+# Add proposal to tasks file
+python3 - "$TASKS_FILE" "$LOCK_FILE" "$PROPOSAL_ID" "$AGENT_ID" "$TITLE" "$DESCRIPTION" "$PROPOSED_AT" <<'EOF'
+import json, sys, fcntl, datetime
+
+tasks_file, lock_path, proposal_id, agent_id, title, description, proposed_at = sys.argv[1:8]
+
+with open(lock_path, 'w') as lock_f:
+    fcntl.flock(lock_f, fcntl.LOCK_EX)
+    with open(tasks_file) as f:
+        data = json.load(f)
+
+    # Initialize proposals array if not exists
+    if 'proposals' not in data:
+        data['proposals'] = []
+
+    proposal = {
+        'id': proposal_id,
+        'title': title,
+        'description': description,
+        'proposed_by': agent_id,
+        'proposed_at': proposed_at,
+        'status': 'pending',  # pending, approved, rejected
+        'task_id': None  # filled in when approved
+    }
+    data['proposals'].append(proposal)
+
+    with open(tasks_file, 'w') as f:
+        json.dump(data, f, indent=2)
+
+    print(proposal_id)
+EOF
+
+echo "Proposal $PROPOSAL_ID submitted: '$TITLE'"
+echo "Waiting for Lead approval..."
+
+# Push notification to Lead
+notify_push "$TEAM_NAME" "$AGENT_ID" "proposal_submitted" "$PROPOSAL_ID" "$TITLE" "lead"

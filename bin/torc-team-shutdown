@@ -1,0 +1,254 @@
+#!/bin/bash
+# torc-team-shutdown - Gracefully shutdown a team after completion
+# Usage: torc team shutdown <team-name> [--force]
+#
+# Checks before shutdown:
+# 1. All tasks are 'done'
+# 2. All agent branches merged to main
+# 3. No uncommitted changes
+# 4. Main branch is pushed
+#
+# Use --force to skip checks (not recommended)
+
+set -euo pipefail
+TORC_BIN="$(cd "$(dirname "$0")" && pwd)"
+source "$TORC_BIN/../lib/config.sh"
+source "$TORC_BIN/../lib/state.sh"
+source "$TORC_BIN/../lib/tasks.sh"
+source "$TORC_BIN/../lib/tmux.sh"
+
+usage() {
+    cat <<'EOF'
+Usage: torc team shutdown <team-name> [options]
+
+Gracefully shutdown a team:
+1. Verify all work is complete (tasks done, branches merged)
+2. Broadcast exit message to all agents
+3. Wait for agents to exit gracefully
+4. Kill tmux session
+5. Preserve worktrees for review
+
+Options:
+  --force    Skip completion checks (may lose unmerged work)
+
+Examples:
+  torc team shutdown my-app        # Safe shutdown with checks
+  torc team shutdown my-app --force  # Force shutdown (unsafe)
+EOF
+}
+
+# Parse args
+TEAM_NAME=""
+FORCE=false
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -h|--help)   usage; exit 0 ;;
+        --force)     FORCE=true; shift ;;
+        -*)          echo "Unknown option: $1" >&2; exit 1 ;;
+        *)
+            if [ -z "$TEAM_NAME" ]; then
+                TEAM_NAME="$1"
+            else
+                echo "Error: too many arguments" >&2
+                exit 1
+            fi
+            shift
+            ;;
+    esac
+done
+
+if [ -z "$TEAM_NAME" ]; then
+    usage
+    exit 1
+fi
+
+if ! team_exists "$TEAM_NAME"; then
+    echo "Error: team '$TEAM_NAME' not found" >&2
+    exit 1
+fi
+
+SESSION=$(team_field "$TEAM_NAME" "session")
+PROJECT_PATH=$(team_field "$TEAM_NAME" "project_path")
+TASKS_FILE=$(tasks_file "$TEAM_NAME")
+
+echo "=== Shutting down team '$TEAM_NAME' ==="
+echo "Session: $SESSION"
+echo "Project: $PROJECT_PATH"
+echo ""
+
+# Check if project is a git repo
+if [ ! -d "$PROJECT_PATH/.git" ]; then
+    echo "Error: Project is not a git repository" >&2
+    exit 1
+fi
+
+# Pre-shutdown checks (unless --force)
+if [ "$FORCE" = false ]; then
+    echo "=== Pre-shutdown Checks ==="
+    echo ""
+
+    CHECKS_PASSED=true
+
+    # Check 1: All tasks done
+    echo "[Check 1] Verifying all tasks are complete..."
+    if [ -f "$TASKS_FILE" ]; then
+        INCOMPLETE_TASKS=$(python3 - "$TASKS_FILE" <<'EOF'
+import json, sys
+try:
+    with open(sys.argv[1]) as f:
+        data = json.load(f)
+    tasks = data.get('tasks', [])
+    incomplete = [t['id'] for t in tasks if t.get('status') != 'done']
+    if incomplete:
+        print(','.join(incomplete))
+except:
+    pass
+EOF
+)
+        if [ -n "$INCOMPLETE_TASKS" ]; then
+            echo "      ✗ FAIL: Tasks not done: $INCOMPLETE_TASKS"
+            CHECKS_PASSED=false
+        else
+            echo "      ✓ All tasks done"
+        fi
+    else
+        echo "      ! No tasks file found, skipping"
+    fi
+    echo ""
+
+    # Check 2: Agent branches merged
+    echo "[Check 2] Checking agent branches are merged to main..."
+    cd "$PROJECT_PATH"
+    git checkout main 2>/dev/null || true
+
+    UNMERGED_AGENTS=$(python3 - "$PROJECT_PATH" <<'EOF'
+import subprocess, sys, os
+project_path = sys.argv[1]
+os.chdir(project_path)
+
+# Get all agent branches (local and remote)
+result = subprocess.run(['git', 'branch', '-a'], capture_output=True, text=True)
+branches = [b.strip().strip('* ') for b in result.stdout.split('\n') if b.strip()]
+agent_branches = [b for b in branches if 'agent-' in b and 'HEAD' not in b]
+
+# Check which are merged
+unmerged = []
+for branch in agent_branches:
+    # Remove remote prefix for check
+    check_branch = branch.replace('remotes/origin/', '')
+    result = subprocess.run(['git', 'branch', '--merged', 'main'], capture_output=True, text=True)
+    merged_branches = [b.strip().strip('* ') for b in result.stdout.split('\n')]
+    if check_branch not in merged_branches and branch not in merged_branches:
+        unmerged.append(branch)
+
+if unmerged:
+    print(','.join(unmerged))
+EOF
+)
+    if [ -n "$UNMERGED_AGENTS" ]; then
+        echo "      ✗ FAIL: Unmerged agent branches: $UNMERGED_AGENTS"
+        CHECKS_PASSED=false
+    else
+        echo "      ✓ All agent branches merged"
+    fi
+    echo ""
+
+    # Check 3: Worktree clean (no uncommitted changes)
+    echo "[Check 3] Checking for uncommitted changes..."
+    if ! git diff-index --quiet HEAD -- 2>/dev/null || ! git diff-index --cached --quiet HEAD -- 2>/dev/null; then
+        echo "      ✗ FAIL: Uncommitted changes in main branch"
+        git status --short
+        CHECKS_PASSED=false
+    else
+        echo "      ✓ Working tree clean"
+    fi
+    echo ""
+
+    # Check 4: Main pushed to origin
+    echo "[Check 4] Checking main branch is pushed..."
+    UNPUSHED=$(git log origin/main..main --oneline 2>/dev/null || echo "")
+    if [ -n "$UNPUSHED" ]; then
+        echo "      ✗ FAIL: Unpushed commits on main:"
+        echo "$UNPUSHED"
+        CHECKS_PASSED=false
+    else
+        echo "      ✓ Main branch pushed"
+    fi
+    echo ""
+
+    # Final check result
+    if [ "$CHECKS_PASSED" = false ]; then
+        echo "========================================"
+        echo "SHUTDOWN BLOCKED: Checks failed"
+        echo "========================================"
+        echo ""
+        echo "To fix:"
+        echo "  1. Complete all tasks: torc team status $TEAM_NAME"
+        echo "  2. Merge agent branches: cd $PROJECT_PATH && git merge <branch>"
+        echo "  3. Commit changes: git add . && git commit -m '...'"
+        echo "  4. Push to origin: git push origin main"
+        echo ""
+        echo "To shutdown anyway (RISKY - may lose work):"
+        echo "  torc team shutdown $TEAM_NAME --force"
+        echo ""
+        exit 1
+    fi
+
+    echo "========================================"
+    echo "All checks passed! Proceeding with shutdown."
+    echo "========================================"
+    echo ""
+else
+    echo "WARNING: --force specified, skipping all checks!"
+    echo ""
+fi
+
+# Step 1: Broadcast shutdown message
+if tmux_session_exists "$SESSION"; then
+    echo "[1/3] Broadcasting shutdown message to agents..."
+
+    # Get all agent windows
+    AGENTS_JSON=$(team_field "$TEAM_NAME" "agents")
+
+    echo "$AGENTS_JSON" | python3 - "$SESSION" "$TORC_BIN" <<'EOF' 2>/dev/null
+import json, sys, subprocess
+session, torc_bin = sys.argv[1:3]
+agents = json.load(sys.stdin)
+
+shutdown_msg = "=== TEAM SHUTDOWN ===\nAll tasks complete. Please exit gracefully.\nType 'exit' to close your session."
+
+for agent_id, info in agents.items():
+    if agent_id == 'lead':
+        continue
+    window = info.get('window', '')
+    if window:
+        target = f"{session}:{window}"
+        subprocess.run([f"{torc_bin}/torc-send", target, shutdown_msg],
+                      capture_output=True, check=False)
+EOF
+
+    echo "      ✓ Shutdown message sent"
+    echo ""
+
+    # Step 2: Wait for agents to exit
+    echo "[2/3] Waiting for agents to exit (10s)..."
+    sleep 10
+
+    # Step 3: Kill session
+    echo "[3/3] Killing tmux session..."
+    tmux_kill_session "$SESSION" || true
+    echo "      ✓ Session killed"
+else
+    echo "Session not running, skipping broadcast"
+fi
+
+echo ""
+echo "=== Shutdown Complete ==="
+echo "Team '$TEAM_NAME' has been shut down."
+echo ""
+echo "Worktrees preserved for review:"
+ls -la "$PROJECT_PATH/.worktrees/" 2>/dev/null || echo "  (no worktrees)"
+echo ""
+echo "To completely remove team (including state):"
+echo "  torc teardown $TEAM_NAME"

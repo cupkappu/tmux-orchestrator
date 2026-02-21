@@ -21,25 +21,26 @@ usage() {
 Usage: torc team deploy <project-path> [options]
 
 Deploy a self-organizing team. Only spawns Lead initially.
-Lead generates tasks from spec, then spawns teammates.
+Lead reads charter, generates tasks, then spawns teammates.
 
 Options:
-  --spec <file>        PRD/requirements document
+  --charter <file>     Project charter (copied to project/CHARTER.md)
+  --spec <file>        Alias for --charter (deprecated)
   --teammates <n>      Max teammates to spawn (default: 3)
   --name <team-name>   Override team name
   --lead-cli <tool>    Lead CLI: claude/kimi/opencode (default: claude)
   --teammate-cli <tool> Teammate CLI: kimi/opencode/claude (default: kimi)
 
 Examples:
-  torc team deploy ~/projects/my-app --spec prd.md
-  torc team deploy ~/projects/my-app --teammates 2 --lead-cli kimi --teammate-cli opencode
+  torc team deploy ~/projects/my-app --charter requirements.md
+  torc team deploy ~/projects/my-app --teammates 2 --lead-cli kimi
 EOF
 }
 
 # ── Parse args ─────────────────────────────────────────────────────────────────
 
 PROJECT_PATH=""
-SPEC_FILE=""
+CHARTER_FILE=""
 TEAMMATE_COUNT=3
 TEAM_NAME_OVERRIDE=""
 LEAD_CLI_NAME=$(get_selforg_default_cli "lead")
@@ -48,7 +49,8 @@ TEAMMATE_CLI_NAME=$(get_selforg_default_cli "agent")
 while [ $# -gt 0 ]; do
     case "$1" in
         -h|--help)          usage; exit 0 ;;
-        --spec)             SPEC_FILE="$2"; shift 2 ;;
+        --charter)          CHARTER_FILE="$2"; shift 2 ;;
+        --spec)             CHARTER_FILE="$2"; shift 2 ;;  # backward compat
         --teammates)        TEAMMATE_COUNT="$2"; shift 2 ;;
         --name)             TEAM_NAME_OVERRIDE="$2"; shift 2 ;;
         --lead-cli)         LEAD_CLI_NAME="$2"; shift 2 ;;
@@ -88,8 +90,8 @@ echo "Deploying self-organizing team: $TEAM_NAME"
 echo "  Project:     $PROJECT_PATH"
 echo "  Session:     $SESSION"
 echo "  Lead:        $LEAD_CLI_NAME ($LEAD_CLI)"
-echo "  Max teammates: $TEAMMATE_COUNT x $TEAMMATE_CLI_NAME"
-[ -n "$SPEC_FILE" ] && echo "  Spec:        $SPEC_FILE"
+echo "  Teammates:   $TEAMMATE_COUNT x $TEAMMATE_CLI_NAME"
+[ -n "$CHARTER_FILE" ] && echo "  Charter:     $CHARTER_FILE"
 echo ""
 
 # ── Phase 1: Create team state and empty task list ─────────────────────────────
@@ -102,16 +104,43 @@ ensure_tasks_dir
 CREATED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 TASKS_FILE=$(tasks_file "$TEAM_NAME")
 
-# Create empty task list (Lead will populate)
-EMPTY_TASKS=$(python3 -c "
+# Copy charter to project directory so all agents can read it
+CHARTER_CONTENT=""
+if [ -n "$CHARTER_FILE" ] && [ -f "$CHARTER_FILE" ]; then
+    # Only copy if charter is not already in project root
+    if [ "$CHARTER_FILE" != "$PROJECT_PATH/CHARTER.md" ]; then
+        cp "$CHARTER_FILE" "$PROJECT_PATH/CHARTER.md"
+        echo "  ✓ Charter copied to $PROJECT_PATH/CHARTER.md"
+    else
+        echo "  ✓ Charter already at $PROJECT_PATH/CHARTER.md"
+    fi
+    CHARTER_CONTENT=$(cat "$CHARTER_FILE" | sed 's/"/\\"/g')
+fi
+
+# Create task list with charter (Lead will populate tasks)
+if [ -n "$CHARTER_CONTENT" ]; then
+    INIT_TASKS=$(python3 -c "
 import json
 print(json.dumps({
     'team': '$TEAM_NAME',
     'version': 1,
-    'tasks': []
+    'charter': '''$CHARTER_CONTENT''',
+    'tasks': [],
+    'proposals': []
 }, indent=2))
 ")
-echo "$EMPTY_TASKS" > "$TASKS_FILE"
+else
+    INIT_TASKS=$(python3 -c "
+import json
+print(json.dumps({
+    'team': '$TEAM_NAME',
+    'version': 1,
+    'tasks': [],
+    'proposals': []
+}, indent=2))
+")
+fi
+echo "$INIT_TASKS" > "$TASKS_FILE"
 
 # Create team state
 STATE_JSON=$(python3 -c "
@@ -122,7 +151,7 @@ print(json.dumps({
     'session': '$SESSION',
     'created_at': '$CREATED_AT',
     'architecture': 'self-organizing',
-    'spec_file': '$SPEC_FILE',
+    'charter_file': '$PROJECT_PATH/CHARTER.md',
     'max_teammates': $TEAMMATE_COUNT,
     'teammate_cli': '$TEAMMATE_CLI_NAME',
     'agents': {}
@@ -179,81 +208,80 @@ echo "  ✓ Lead started"
 echo ""
 echo "=== Phase 3: Briefing Lead ==="
 
-SPEC_CONTENT=""
-if [ -n "$SPEC_FILE" ] && [ -f "$SPEC_FILE" ]; then
-    SPEC_CONTENT=$(cat "$SPEC_FILE")
+# Check for charter file
+CHARTER_PATH="$PROJECT_PATH/CHARTER.md"
+if [ -f "$CHARTER_PATH" ]; then
+    CHARTER_NOTE="Charter is at: $CHARTER_PATH"
+else
+    CHARTER_NOTE="No charter provided. Read existing project files to understand the goal."
 fi
 
-LEAD_BRIEFING="=== LEAD AGENT BRIEFING ===
-You are the Team Lead for '$TEAM_NAME'.
-Your mission: Coordinate a team to build this project.
+LEAD_BRIEFING="=== LEAD BRIEFING ===
+You are the Lead of team '$TEAM_NAME'.
+Worktree: $LEAD_WT
 
-=== PROJECT SPEC ===
-${SPEC_CONTENT:-No spec provided. Read existing project and design tasks.}
+=== CRITICAL: USE TORC COMMANDS ONLY ===
+You MUST use torc commands to manage the team. DO NOT use Claude Task tool.
 
-=== YOUR WORKFLOW ===
+First, ensure torc is in PATH:
+export PATH=\"/Users/kifuko/dev/Tmux-Orchestrator/bin:\$PATH\"
+which torc  # Verify it works
 
-**PHASE 1: Generate Task List (YOU DO THIS NOW)**
+$CHARTER_NOTE
 
-1. Read the spec above
-2. Create tasks.json at: $TASKS_FILE
-   Format:
-   {
-     \"team\": \"$TEAM_NAME\",
-     \"version\": 1,
-     \"tasks\": [
-       {
-         \"id\": \"T-001\",
-         \"title\": \"Task name\",
-         \"description\": \"What to do\",
-         \"blocked_by\": [],
-         \"require_plan\": true/false,
-         \"status\": \"pending\",
-         \"owner\": null,
-         ... (other fields)
-       }
-     ]
-   }
+=== STEP 1: READ CHARTER (MUST DO FIRST) ===
+cat $CHARTER_PATH
 
-3. Rules for task design:
-   - T-001 should be architecture/design (require_plan: true)
-   - Each task completable by one agent
-   - No overlapping file changes
-   - Use blocked_by for dependencies
-   - 4-8 tasks total
+=== STEP 2: GENERATE TASKS AUTONOMOUSLY ===
+Based on the charter, create 6-10 concrete tasks using torc:
 
-4. Write the file:
-   cat > $TASKS_FILE << 'EOF'
-   {your json}
-   EOF
+torc team propose $TEAM_NAME lead 'T1: Project Setup' 'Initialize Next.js with TypeScript, Tailwind'
+torc team propose $TEAM_NAME lead 'T2: Design System' 'Create pastel color palette and global styles'
+torc team propose $TEAM_NAME lead 'T3: Hero Section' 'Animated gradient, floating elements, typewriter'
+torc team propose $TEAM_NAME lead 'T4: About Section' 'Profile hover effect, skill cards with progress'
+torc team propose $TEAM_NAME lead 'T5: Projects' '3D tilt cards, hover effects, filter buttons'
+torc team propose $TEAM_NAME lead 'T6: Contact' 'Animated form, confetti success, social links'
+torc team propose $TEAM_NAME lead 'T7: Navigation' 'Sticky nav, smooth scroll, mobile hamburger'
+torc team propose $TEAM_NAME lead 'T8: Effects' 'Custom cursor, particles, dark/light toggle'
 
-**PHASE 2: Spawn Teammates**
-
-After tasks are created, spawn up to $TEAMMATE_COUNT teammates:
+=== STEP 3: SPAWN TEAMMATES (CRITICAL: USE TORC SPAWN) ===
+After creating ALL tasks, spawn agents using torc command:
 
 torc team spawn $TEAM_NAME $TEAMMATE_COUNT --cli $TEAMMATE_CLI_NAME
 
-**PHASE 3: Coordinate**
+⚠️  WARNING: Use 'torc team spawn' NOT Claude Task tool
+⚠️  Agents must be spawned via torc to integrate with task system
 
-Once teammates are active:
-- Monitor: torc team status $TEAM_NAME
-- Approve plans: torc team approve $TEAM_NAME <task-id>
-- Reject plans: torc team reject $TEAM_NAME <task-id> \"<feedback>\"
+=== STEP 4: COORDINATE (ONGOING LOOP) ===
+- Check inbox: torc team inbox $TEAM_NAME lead
+- Review proposals: torc team proposals $TEAM_NAME
+- Approve/reject plans: torc team approve/reject $TEAM_NAME <task-id>
+- FACILITATE communication:
+  * If agents conflict, mediate via messages
+  * Broadcast decisions affecting all agents
+  * Help unblock stuck agents
 
-**Auto-approval criteria:**
-- Plan includes tests
-- Under 100 lines of change
-- Doesn't break existing interfaces
+=== STEP 5: SHUTDOWN (WHEN ALL TASKS DONE) ===
+When ALL tasks show status 'done':
+1. Broadcast: torc team msg $TEAM_NAME lead broadcast 'All tasks complete. Exit gracefully.'
+2. Wait 15s
+3. Shutdown: torc team shutdown $TEAM_NAME
 
-**COMMUNICATION:**
-- Teammates can message you: torc team msg $TEAM_NAME <agent> lead \"msg\"
-- You can message them: torc team msg $TEAM_NAME lead <agent> \"msg\"
-- Broadcast: torc team msg $TEAM_NAME lead broadcast \"msg\"
+=== CRITICAL RULES ===
+✗ NEVER use Claude Task tool - use torc commands only
+✗ NEVER approve work that deviates from the CHARTER
+✓ Agents self-claim tasks - you don't assign
+✓ Reject immediately if proposal contradicts CHARTER
+✓ Approve plans that: include tests, <100 lines, don't break interfaces
+✓ MUST shutdown team when ALL tasks done
 
-**START NOW:**
-
-Generate tasks.json, then spawn teammates.
-"
+=== START NOW ===
+1. export PATH=\"/Users/kifuko/dev/Tmux-Orchestrator/bin:\$PATH\"
+2. cat $CHARTER_PATH
+3. Create task proposals
+4. Spawn agents
+5. Coordinate until all done
+6. Shutdown the team"
 
 tmux send-keys -t "$SESSION:Lead" "$LEAD_BRIEFING"
 sleep 0.5

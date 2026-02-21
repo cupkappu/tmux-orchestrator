@@ -77,15 +77,19 @@ resolve_window() {
 send_to_window() {
     local target="$1"
     local msg="$2"
-    
-    # Format message with sender info
+
+    # Format message with sender info and reply instructions
     local formatted
     if [ "$FROM" = "user" ]; then
-        formatted="[User → You] $msg"
+        formatted="[Message from User] $msg
+
+[Reply with: torc team msg $TEAM_NAME <your-id> user <your-message>]"
     else
-        formatted="[$FROM → You] $msg"
+        formatted="[Message from $FROM] $msg
+
+[Reply with: torc team msg $TEAM_NAME <your-id> $FROM <your-message>]"
     fi
-    
+
     if "$TORC_BIN/torc-send" "$SESSION:$target" "$formatted" 2>/dev/null; then
         return 0
     else

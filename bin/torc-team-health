@@ -1,0 +1,268 @@
+#!/bin/bash
+# torc-team-health - Show team health metrics and potential blockers
+# Usage: torc team health <team-name>
+#
+# Displays activity metrics for each agent, task states, and potential blockers.
+# Does not auto-judge "done" - provides data for human decision.
+
+set -euo pipefail
+TORC_BIN="$(cd "$(dirname "$0")" && pwd)"
+source "$TORC_BIN/../lib/config.sh"
+source "$TORC_BIN/../lib/state.sh"
+source "$TORC_BIN/../lib/tasks.sh"
+source "$TORC_BIN/../lib/tmux.sh"
+
+usage() {
+    cat <<'EOF'
+Usage: torc team health <team-name>
+
+Show team health metrics, activity indicators, and potential blockers.
+Provides data for human judgment - does not auto-determine completion.
+
+Examples:
+  torc team health my-app
+EOF
+}
+
+if [ $# -lt 1 ] || [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+    usage
+    exit 0
+fi
+
+TEAM_NAME="$1"
+
+if ! team_exists "$TEAM_NAME"; then
+    echo "Error: team '$TEAM_NAME' not found" >&2
+    exit 1
+fi
+
+PROJECT_PATH=$(team_field "$TEAM_NAME" "project_path")
+SESSION=$(team_field "$TEAM_NAME" "session")
+TASKS_FILE=$(tasks_file "$TEAM_NAME")
+
+if [ -z "$PROJECT_PATH" ] || [ -z "$SESSION" ]; then
+    echo "Error: corrupted team state for '$TEAM_NAME'" >&2
+    exit 1
+fi
+
+echo "=== Team Health: $TEAM_NAME ==="
+echo "Session: $SESSION"
+echo "Project: $PROJECT_PATH"
+echo ""
+
+# Check if session is running
+if ! tmux_session_exists "$SESSION"; then
+    echo "⚠️  Session not running"
+    echo "   Resume with: torc team resume $TEAM_NAME"
+    exit 0
+fi
+
+# Get agents from state
+AGENTS_JSON=$(team_field "$TEAM_NAME" "agents" 2>/dev/null || echo "{}")
+
+echo "--- Agent Activity ---"
+echo "$AGENTS_JSON" | python3 - "$SESSION" "$PROJECT_PATH" <<'EOF'
+import json, sys, subprocess, os
+
+session, project_path = sys.argv[1:3]
+agents = json.load(sys.stdin)
+
+for agent_id, info in agents.items():
+    window = info.get('window', 'unknown')
+    worktree = info.get('worktree', '')
+    role = info.get('role', 'agent')
+
+    # Check last output from window (last 5 lines)
+    try:
+        result = subprocess.run(
+            ['tmux', 'capture-pane', '-t', f'{session}:{window}', '-p'],
+            capture_output=True, text=True, timeout=5
+        )
+        lines = result.stdout.strip().split('\n')[-5:]
+        last_output = lines[-1] if lines else "(no output)"
+    except:
+        last_output = "(cannot capture)"
+
+    # Check worktree for recent git activity
+    git_status = ""
+    if worktree and os.path.isdir(worktree):
+        try:
+            # Check last commit time
+            result = subprocess.run(
+                ['git', '-C', worktree, 'log', '-1', '--format=%ar'],
+                capture_output=True, text=True, timeout=3
+            )
+            last_commit = result.stdout.strip() if result.returncode == 0 else "no commits"
+
+            # Check uncommitted changes
+            result2 = subprocess.run(
+                ['git', '-C', worktree, 'status', '--porcelain'],
+                capture_output=True, text=True, timeout=3
+            )
+            uncommitted = len([l for l in result2.stdout.strip().split('\n') if l.strip()])
+
+            git_status = f"last commit: {last_commit}"
+            if uncommitted > 0:
+                git_status += f", {uncommitted} uncommitted"
+        except:
+            git_status = "git info unavailable"
+
+    status_icon = "●" if "no output" in last_output or "cannot capture" in last_output else "◑"
+
+    print(f"{status_icon} {agent_id} [{role}]")
+    print(f"   Window: {window}")
+    print(f"   Last output: {last_output[:60]}{'...' if len(last_output) > 60 else ''}")
+    if git_status:
+        print(f"   Git: {git_status}")
+    print()
+EOF
+
+echo "--- Task State ---"
+if [ -f "$TASKS_FILE" ]; then
+    python3 - "$TASKS_FILE" <<'EOF'
+import json, sys
+
+with open(sys.argv[1]) as f:
+    data = json.load(f)
+
+tasks = data.get('tasks', [])
+proposals = data.get('proposals', [])
+
+# Task summary
+pending = [t for t in tasks if t['status'] == 'pending']
+in_progress = [t for t in tasks if t['status'] == 'in_progress']
+done = [t for t in tasks if t['status'] == 'done']
+
+print(f"Tasks: {len(done)} done, {len(in_progress)} in progress, {len(pending)} pending")
+print()
+
+# Show in-progress tasks with owner
+if in_progress:
+    print("In Progress:")
+    for t in in_progress:
+        owner = t.get('owner') or 'unassigned'
+        plan_status = t.get('plan_status') or 'no plan'
+        print(f"  ◑ {t['id']}: {t['title']}")
+        print(f"     Owner: {owner}, Plan: {plan_status}")
+    print()
+
+# Show pending proposals
+pending_proposals = [p for p in proposals if p.get('status') == 'pending']
+if pending_proposals:
+    print(f"Pending Proposals ({len(pending_proposals)}):")
+    for p in pending_proposals:
+        print(f"  📨 {p['id']}: {p['title']} (by {p['proposed_by']})")
+    print()
+
+# Show tasks waiting for plan approval
+waiting_approval = [t for t in in_progress if t.get('plan_status') == 'submitted']
+if waiting_approval:
+    print(f"Waiting for Plan Approval ({len(waiting_approval)}):")
+    for t in waiting_approval:
+        print(f"  📋 {t['id']}: {t['title']} (by {t.get('owner', 'unknown')})")
+    print()
+
+# Show blocked tasks
+if pending:
+    blocked = [t for t in pending if t.get('blocked_by')]
+    if blocked:
+        print(f"Blocked Tasks ({len(blocked)}):")
+        done_ids = {t['id'] for t in done}
+        for t in blocked:
+            deps = t.get('blocked_by', [])
+            unmet = [d for d in deps if d not in done_ids]
+            if unmet:
+                print(f"  ⊘ {t['id']}: {t['title']} (needs: {', '.join(unmet)})")
+        print()
+EOF
+else
+    echo "No task file found"
+fi
+
+echo "--- Inbox Status ---"
+echo "$AGENTS_JSON" | python3 - "$TEAM_NAME" "$TORC_BIN" <<'EOF'
+import json, sys, os, glob
+
+team_name, torc_bin = sys.argv[1:3]
+agents = json.load(sys.stdin)
+
+tasks_dir = os.path.expanduser(f"~/.tmux-orchestrator/tasks")
+
+for agent_id in list(agents.keys()) + ['lead']:
+    inbox_file = f"{tasks_dir}/{team_name}-inbox-{agent_id}.txt"
+    if os.path.exists(inbox_file) and os.path.getsize(inbox_file) > 0:
+        with open(inbox_file) as f:
+            lines = [l.strip() for l in f if l.strip()]
+        if lines:
+            print(f"  📬 {agent_id}: {len(lines)} unread message(s)")
+EOF
+
+echo ""
+echo "--- Observations ---"
+
+# Generate simple observations
+python3 - "$TASKS_FILE" "$AGENTS_JSON" <<'EOF'
+import json, sys
+
+tasks_file, agents_json = sys.argv[1:3]
+
+with open(tasks_file) as f:
+    data = json.load(f)
+
+agents = json.loads(agents_json)
+tasks = data.get('tasks', [])
+proposals = data.get('proposals', [])
+
+observations = []
+
+# Check for agents without work
+in_progress = [t for t in tasks if t['status'] == 'in_progress']
+working_agents = {t.get('owner') for t in in_progress}
+all_agents = set(agents.keys())
+
+idle_agents = all_agents - working_agents - {'lead', 'orchestrator'}
+if idle_agents:
+    observations.append(f"Agents with no claimed task: {', '.join(sorted(idle_agents))}")
+
+# Check for pending proposals
+pending_proposals = [p for p in proposals if p.get('status') == 'pending']
+if pending_proposals:
+    observations.append(f"Lead has {len(pending_proposals)} proposal(s) to review")
+
+# Check for plans awaiting approval
+waiting_approval = [t for t in in_progress if t.get('plan_status') == 'submitted']
+if waiting_approval:
+    observations.append(f"{len(waiting_approval)} plan(s) awaiting Lead approval")
+
+# Check if all tasks are done
+all_done = all(t['status'] == 'done' for t in tasks) if tasks else False
+if all_done:
+    observations.append("All tasks marked done - verify completion with Lead")
+
+# Check for tasks stuck in in_progress with no activity (heuristic)
+import datetime
+now = datetime.datetime.utcnow()
+for t in in_progress:
+    claimed = t.get('claimed_at')
+    if claimed:
+        try:
+            claimed_dt = datetime.datetime.fromisoformat(claimed.replace('Z', '+00:00'))
+            elapsed = (now - claimed_dt).total_seconds() / 60  # minutes
+            if elapsed > 30:
+                observations.append(f"{t['id']} claimed {int(elapsed)} min ago by {t.get('owner')} - may be stuck")
+        except:
+            pass
+
+if observations:
+    for obs in observations:
+        print(f"  • {obs}")
+else:
+    print("  • No obvious blockers detected")
+EOF
+
+echo ""
+echo "--- Quick Actions ---"
+echo "  torc team status $TEAM_NAME           # full task list"
+echo "  torc team inbox $TEAM_NAME lead       # check Lead inbox"
+echo "  torc team proposals $TEAM_NAME        # review proposals"
+echo "  tmux attach -t $SESSION               # join session"

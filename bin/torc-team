@@ -20,26 +20,46 @@ usage() {
     cat <<'EOF'
 Usage: torc team <command> [args]
 
-Commands:
+Team Management:
   init <project> [--name <name>]     Create team with empty task list
   deploy <project> --spec <file>    Deploy self-organizing team (Lead+agents)
+  spawn-lead <team> [--cli <tool>]   Spawn Lead for team
   spawn <team> <n> [--cli <tool>]   Spawn N agents
-  claim <team> <agent>              Agent: claim next task
-  plan-submit <team> <task> <plan>  Agent: submit plan
-  approve <team> <task>              Lead: approve plan
-  reject <team> <task> <feedback>   Lead: reject plan
-  done <team> <task> [<result>]     Agent: mark done
+  resume <team> [options]           Resume team (recreate session)
+    --spawn-lead                    Respawn Lead
+    --spawn-agents <n>              Respawn N agents
+  shutdown <team>                   Graceful shutdown when all tasks done
   status <team> [--task <id>]       Show status
-  broadcast <team> <msg>            Message all agents
+  health <team>                     Show health metrics & blockers
   inbox <team> <agent>              Read & clear agent inbox
   monitor <team> [--tail <n>]       Live event-stream window
 
+Agent Actions:
+  claim <team> <agent>              Claim next available task
+  plan-submit <team> <task> <plan>  Submit plan for approval
+  done <team> <task> [<result>]     Mark task complete
+  propose <team> <agent> <title> <desc>  Propose new task
+
+Lead Actions:
+  approve <team> <task>             Approve submitted plan
+  reject <team> <task> <feedback>   Reject plan with feedback
+  proposals <team>                  List pending proposals
+  approve-proposal <team> <id>      Approve task proposal
+  reject-proposal <team> <id> [reason]  Reject task proposal
+
+Communication:
+  broadcast <team> <msg>            Message all agents
+  msg <team> <from> <to> <msg>      Send direct message
+
 Examples:
   torc team init ~/my-app            # create team with empty task list
-  torc team deploy ~/my-app --spec plan.md  # deploy with Lead + teammates
+  torc team spawn-lead my-app        # spawn Lead
   torc team spawn my-app 3           # spawn 3 agents
+  torc team proposals my-app         # review pending proposals
   torc team status my-app
-  torc team monitor my-app           # open live event stream
+
+  # Session crashed? Resume with all agents:
+  torc team resume my-app --spawn-lead --spawn-agents 3
 EOF
 }
 
@@ -52,7 +72,7 @@ COMMAND="${1:-}"
 shift
 
 case "$COMMAND" in
-    init|deploy|spawn|claim|plan-submit|approve|reject|done|status|broadcast|inbox|monitor)
+    init|deploy|spawn|spawn-lead|resume|shutdown|claim|plan-submit|approve|reject|done|status|health|broadcast|inbox|monitor|proposals|approve-proposal|reject-proposal|propose|msg)
         if [ -x "$TORC_BIN/torc-team-$COMMAND" ]; then
             "$TORC_BIN/torc-team-$COMMAND" "$@"
         else

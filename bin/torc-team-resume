@@ -1,0 +1,126 @@
+#!/bin/bash
+# torc-team-resume - Resume a team (recreate session, preserve state)
+# Usage: torc team resume <team-name> [--spawn-lead] [--spawn-agents <n>]
+#
+# When a team's tmux session is gone but state remains, this recreates
+the session and optionally respawns Lead/Agents.
+
+set -euo pipefail
+TORC_BIN="$(cd "$(dirname "$0")" && pwd)"
+source "$TORC_BIN/../lib/config.sh"
+source "$TORC_BIN/../lib/state.sh"
+source "$TORC_BIN/../lib/tmux.sh"
+
+usage() {
+    cat <<'EOF'
+Usage: torc team resume <team-name> [options]
+
+Resume a team by recreating its tmux session. Preserves all state
+tasks, proposals, and agent records. Optionally respawns Lead/Agents.
+
+Options:
+  --spawn-lead         Respawn the Lead
+  --spawn-agents <n>   Respawn N agents
+  --cli <tool>         CLI tool for spawned agents (default: kimi)
+
+Examples:
+  torc team resume my-app
+  torc team resume my-app --spawn-lead
+  torc team resume my-app --spawn-lead --spawn-agents 3
+  torc team resume my-app --spawn-agents 2 --cli claude
+EOF
+}
+
+TEAM_NAME=""
+SPAWN_LEAD=false
+SPAWN_AGENTS=""
+CLI_TOOL=$(get_selforg_default_cli "agent")
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -h|--help)      usage; exit 0 ;;
+        --spawn-lead)   SPAWN_LEAD=true; shift ;;
+        --spawn-agents) SPAWN_AGENTS="$2"; shift 2 ;;
+        --cli)          CLI_TOOL="$2"; shift 2 ;;
+        -*)             echo "Unknown option: $1" >&2; exit 1 ;;
+        *)
+            if [ -z "$TEAM_NAME" ]; then
+                TEAM_NAME="$1"
+            else
+                echo "Error: too many arguments" >&2
+                exit 1
+            fi
+            shift
+            ;;
+    esac
+done
+
+if [ -z "$TEAM_NAME" ]; then
+    echo "Error: team name required" >&2
+    usage
+    exit 1
+fi
+
+if ! team_exists "$TEAM_NAME"; then
+    echo "Error: team '$TEAM_NAME' not found" >&2
+    echo "  Run 'torc team init <project>' to create a new team." >&2
+    exit 1
+fi
+
+PROJECT_PATH=$(team_field "$TEAM_NAME" "project_path")
+SESSION=$(team_field "$TEAM_NAME" "session")
+
+if [ -z "$PROJECT_PATH" ] || [ -z "$SESSION" ]; then
+    echo "Error: corrupted team state for '$TEAM_NAME'" >&2
+    exit 1
+fi
+
+echo "Resuming team '$TEAM_NAME'"
+echo "  Project: $PROJECT_PATH"
+echo "  Session: $SESSION"
+echo ""
+
+# Check if session already exists
+if tmux_session_exists "$SESSION"; then
+    echo "⚠️  Session '$SESSION' already running"
+    echo "    Attach with: tmux attach -t $SESSION"
+    echo ""
+else
+    # Recreate session
+    echo "Recreating tmux session..."
+    tmux_create_session "$SESSION" "$PROJECT_PATH" "Team"
+    sleep 0.5
+    echo "  ✓ Session recreated"
+    echo ""
+fi
+
+# Respawn Lead if requested
+if [ "$SPAWN_LEAD" = true ]; then
+    echo "Spawning Lead..."
+    if [ -x "$TORC_BIN/torc-team-spawn-lead" ]; then
+        "$TORC_BIN/torc-team-spawn-lead" "$TEAM_NAME" --cli "$CLI_TOOL"
+    else
+        echo "  ✗ torc-team-spawn-lead not found" >&2
+    fi
+    echo ""
+fi
+
+# Respawn Agents if requested
+if [ -n "$SPAWN_AGENTS" ]; then
+    echo "Spawning $SPAWN_AGENTS agent(s)..."
+    if [ -x "$TORC_BIN/torc-team-spawn" ]; then
+        "$TORC_BIN/torc-team-spawn" "$TEAM_NAME" "$SPAWN_AGENTS" --cli "$CLI_TOOL"
+    else
+        echo "  ✗ torc-team-spawn not found" >&2
+    fi
+    echo ""
+fi
+
+echo "=== Resume Complete ==="
+echo "Team '$TEAM_NAME' is ready"
+echo ""
+echo "Current status:"
+torc team status "$TEAM_NAME" 2>/dev/null || echo "  (status unavailable)"
+echo ""
+echo "Attach to session:"
+echo "  tmux attach -t $SESSION"

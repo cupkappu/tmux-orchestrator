@@ -1,0 +1,67 @@
+#!/bin/bash
+# torc-team-proposals - List pending task proposals for Lead review
+# Usage: torc team proposals <team-name>
+#
+# Shows all pending proposals submitted by agents, waiting for approval.
+
+set -euo pipefail
+TORC_BIN="$(cd "$(dirname "$0")" && pwd)"
+source "$TORC_BIN/../lib/config.sh"
+source "$TORC_BIN/../lib/state.sh"
+source "$TORC_BIN/../lib/tasks.sh"
+
+usage() {
+    cat <<'EOF'
+Usage: torc team proposals <team-name>
+
+List pending task proposals submitted by agents.
+
+Examples:
+  torc team proposals my-app
+EOF
+}
+
+if [ $# -lt 1 ] || [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+    usage
+    exit 0
+fi
+
+TEAM_NAME="$1"
+
+if ! team_exists "$TEAM_NAME"; then
+    echo "Error: team '$TEAM_NAME' not found" >&2
+    exit 1
+fi
+
+TASKS_FILE="$(tasks_file "$TEAM_NAME")"
+if [ ! -f "$TASKS_FILE" ]; then
+    echo "Error: no task list for team '$TEAM_NAME'" >&2
+    exit 1
+fi
+
+python3 - "$TASKS_FILE" <<'EOF'
+import json, sys
+
+with open(sys.argv[1]) as f:
+    data = json.load(f)
+
+proposals = data.get('proposals', [])
+pending = [p for p in proposals if p.get('status') == 'pending']
+
+if not pending:
+    print("No pending proposals.")
+    sys.exit(0)
+
+print(f"=== Pending Proposals ({len(pending)}) ===")
+print()
+
+for p in pending:
+    print(f"  📋 {p['id']}")
+    print(f"     Title: {p['title']}")
+    print(f"     By: {p['proposed_by']} at {p['proposed_at']}")
+    print(f"     Description: {p['description'][:80]}{'...' if len(p['description']) > 80 else ''}")
+    print()
+
+print("To approve: torc team approve-proposal <team> <proposal-id>")
+print("To reject:  torc team reject-proposal <team> <proposal-id> [reason]")
+EOF
